@@ -7,41 +7,53 @@ using System.Threading.Tasks;
   
 namespace TrailBase.Client  
 {
-    public class Operation  
-    {  
-        public CreateOperation? Create { get; set; }  
-        public UpdateOperation? Update { get; set; }  
-        public DeleteOperation? Delete { get; set; }  
-    }  
-  
-    public class CreateOperation  
-    {  
-        public string ApiName { get; set; } = string.Empty;  
-        public Dictionary<string, object> Record { get; set; } = new();  
-    }  
-  
-    public class UpdateOperation  
-    {  
-        public string ApiName { get; set; } = string.Empty;  
-        public string Id { get; set; } = string.Empty;  
-        public Dictionary<string, object> Record { get; set; } = new();  
-    }  
-  
-    public class DeleteOperation  
-    {  
-        public string ApiName { get; set; } = string.Empty;  
-        public string RecordId { get; set; } = string.Empty;  
-    }  
-  
-    public class TransactionRequest  
-    {  
-        public List<Operation> Operations { get; set; } = new();  
-    }  
-  
-    public class TransactionResponse  
-    {  
-        public List<string> Ids { get; set; } = new();  
-    }  
+    public class Operation
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("Create")]
+        public CreateOperation? Create { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("Update")]
+        public UpdateOperation? Update { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("Delete")]
+        public DeleteOperation? Delete { get; set; }
+    }
+
+    public class CreateOperation
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("api_name")]
+        public string ApiName { get; set; } = string.Empty;
+        [System.Text.Json.Serialization.JsonPropertyName("record")]
+        public Dictionary<string, object> Record { get; set; } = new();
+    }
+
+    public class UpdateOperation
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("api_name")]
+        public string ApiName { get; set; } = string.Empty;
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+        [System.Text.Json.Serialization.JsonPropertyName("record")]
+        public Dictionary<string, object> Record { get; set; } = new();
+    }
+
+    public class DeleteOperation
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("api_name")]
+        public string ApiName { get; set; } = string.Empty;
+        [System.Text.Json.Serialization.JsonPropertyName("record_id")]
+        public string RecordId { get; set; } = string.Empty;
+    }
+
+    public class TransactionRequest
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("operations")]
+        public List<Operation> Operations { get; set; } = new();
+    }
+
+    public class TransactionResponse
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("ids")]
+        public List<string> Ids { get; set; } = new();
+    }
   
     public interface ITransactionBatch  
     {  

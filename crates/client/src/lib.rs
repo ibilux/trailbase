@@ -731,22 +731,22 @@ pub struct TransactionResponse {
 }  
   
 pub struct TransactionBatch {  
-    client: Arc<ClientState>,  
-    operations: Vec<Operation>,  
+  client: Arc<ClientState>,  
+  operations: Vec<Operation>,  
 }  
   
 pub struct ApiBatch<'a> {  
-    batch: &'a mut TransactionBatch,  
-    api_name: String,  
+  batch: &'a mut TransactionBatch,  
+  api_name: String,  
 }  
   
 impl TransactionBatch {  
-    pub fn new(client: Arc<ClientState>) -> Self {  
-        Self {  
-            client,  
-            operations: Vec::new(),
-        }
-    }  
+  fn new(client: Arc<ClientState>) -> Self {  
+    Self {  
+      client,  
+      operations: Vec::new(),
+    }
+  }  
   
     pub fn api(&mut self, api_name: impl Into<String>) -> ApiBatch {  
         ApiBatch {  

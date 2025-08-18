@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart' as dio;
 import 'package:trailbase/src/client.dart';
 
+
 class Operation {
   CreateOperation? create;
   UpdateOperation? update;
@@ -33,8 +34,8 @@ class CreateOperation {
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {};
-    data['ApiName'] = apiName;
-    data['Record'] = record;
+    data['api_name'] = apiName;
+    data['record'] = record;
     return data;
   }
 }
@@ -48,9 +49,9 @@ class UpdateOperation {
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {};
-    data['ApiName'] = apiName;
-    data['Id'] = id;
-    data['Record'] = record;
+    data['api_name'] = apiName;
+    data['id'] = id;
+    data['record'] = record;
     return data;
   }
 }
@@ -63,8 +64,8 @@ class DeleteOperation {
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {};
-    data['ApiName'] = apiName;
-    data['RecordId'] = recordId;
+    data['api_name'] = apiName;
+    data['record_id'] = recordId;
     return data;
   }
 }
@@ -76,7 +77,7 @@ class TransactionRequest {
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {};
-    data['Operations'] = operations.map((e) => e.toJson()).toList();
+    data['operations'] = operations.map((e) => e.toJson()).toList();
     return data;
   }
 }

@@ -4,17 +4,17 @@ from typing import List, Dict, Any, Protocol
 from . import Client, JSON_OBJECT
 
 class CreateOperation(typing.TypedDict):
-    ApiName: str
-    Record: JSON_OBJECT
+    api_name: str
+    record: JSON_OBJECT
 
 class UpdateOperation(typing.TypedDict):
-    ApiName: str
-    Id: str
-    Record: JSON_OBJECT
+    api_name: str
+    id: str
+    record: JSON_OBJECT
 
 class DeleteOperation(typing.TypedDict):
-    ApiName: str
-    RecordId: str
+    api_name: str
+    record_id: str
 
 class Operation(typing.TypedDict, total=False):
     Create: CreateOperation
@@ -22,10 +22,10 @@ class Operation(typing.TypedDict, total=False):
     Delete: DeleteOperation
 
 class TransactionRequest(typing.TypedDict):
-    Operations: List[Operation]
+    operations: List[Operation]
 
 class TransactionResponse(typing.TypedDict):
-    Ids: List[str]
+    ids: List[str]
 
 
 class ITransactionBatch(Protocol):
@@ -59,17 +59,17 @@ class TransactionBatch:
         return ApiBatch(self, api_name)
 
     def send(self) -> List[str]:
-        request: TransactionRequest = {"Operations": self._operations}
+        request: TransactionRequest = {"operations": self._operations}
         response = self._client.fetch(
             "/api/transactions/v1/execute",
             method="POST",
             data=request,
         )
         if response.status_code != 200:
-             raise Exception(f"Transaction failed with status code {response.status_code}: {response.text}")
+            raise Exception(f"Transaction failed with status code {response.status_code}: {response.text}")
 
         result: TransactionResponse = response.json()
-        return result.get("Ids", [])
+        return result.get("ids", [])
 
 
     def _add_operation(self, operation: Operation) -> None:
@@ -85,16 +85,16 @@ class ApiBatch:
         self._api_name = api_name
 
     def create(self, record: JSON_OBJECT) -> ITransactionBatch:
-        operation: Operation = {"Create": {"ApiName": self._api_name, "Record": record}}
+        operation: Operation = {"Create": {"api_name": self._api_name, "record": record}}
         self._batch._add_operation(operation)
         return self._batch
 
     def update(self, record_id: str, record: JSON_OBJECT) -> ITransactionBatch:
-        operation: Operation = {"Update": {"ApiName": self._api_name, "Id": record_id, "Record": record}}
+        operation: Operation = {"Update": {"api_name": self._api_name, "id": record_id, "record": record}}
         self._batch._add_operation(operation)
         return self._batch
 
     def delete(self, record_id: str) -> ITransactionBatch:
-        operation: Operation = {"Delete": {"ApiName": self._api_name, "RecordId": record_id}}
+        operation: Operation = {"Delete": {"api_name": self._api_name, "record_id": record_id}}
         self._batch._add_operation(operation)
         return self._batch
