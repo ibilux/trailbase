@@ -6,6 +6,7 @@ import 'package:logging/logging.dart';
 import 'package:dio/dio.dart' as dio;
 
 import 'sse.dart';
+import 'transaction.dart';
 
 class User {
   final String id;
@@ -586,6 +587,8 @@ class Client {
   String site() => _site;
 
   RecordApi records(String name) => RecordApi(this, name);
+
+  TransactionBatch transaction() => TransactionBatch(this);
 
   _TokenState _updateTokens(Tokens? tokens) {
     final state = _TokenState.build(tokens);

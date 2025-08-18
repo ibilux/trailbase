@@ -8,6 +8,8 @@ import logging
 import typing
 import json
 
+from .transaction import TransactionBatch, ApiBatch, JSON
+
 from enum import Enum
 from contextlib import contextmanager
 from time import time
@@ -328,6 +330,9 @@ class Client:
 
     def records(self, name: str) -> "RecordApi":
         return RecordApi(name, self)
+
+    def transaction(self) -> TransactionBatch:
+        return TransactionBatch(self)
 
     def _updateTokens(self, tokens: Tokens | None):
         state = TokenState.build(tokens)

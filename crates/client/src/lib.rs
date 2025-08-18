@@ -15,6 +15,7 @@ use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::*;
@@ -689,6 +690,134 @@ impl ClientState {
   }
 }
 
+// Operation types matching your JS implementation  
+#[derive(Serialize, Deserialize)]  
+pub struct Operation {
+    #[serde(rename = "Create", skip_serializing_if = "Option::is_none")]  
+    pub create: Option<CreateOperation>,  
+    #[serde(rename = "Update", skip_serializing_if = "Option::is_none")]  
+    pub update: Option<UpdateOperation>,  
+    #[serde(rename = "Delete", skip_serializing_if = "Option::is_none")]  
+    pub delete: Option<DeleteOperation>,  
+}  
+  
+#[derive(Serialize, Deserialize)]  
+pub struct CreateOperation {  
+    pub api_name: String,  
+    pub record: HashMap<String, serde_json::Value>,  
+}  
+  
+#[derive(Serialize, Deserialize)]  
+pub struct UpdateOperation {  
+    pub api_name: String,  
+    pub id: String,  
+    pub record: HashMap<String, serde_json::Value>,  
+}  
+  
+#[derive(Serialize, Deserialize)]  
+pub struct DeleteOperation {  
+    pub api_name: String,  
+    pub record_id: String,  
+}  
+  
+#[derive(Serialize)]  
+pub struct TransactionRequest {  
+    pub operations: Vec<Operation>,  
+}  
+  
+#[derive(Deserialize)]  
+pub struct TransactionResponse {  
+    pub ids: Vec<String>,  
+}  
+  
+pub struct TransactionBatch {  
+    client: Arc<ClientState>,  
+    operations: Vec<Operation>,  
+}  
+  
+pub struct ApiBatch<'a> {  
+    batch: &'a mut TransactionBatch,  
+    api_name: String,  
+}  
+  
+impl TransactionBatch {  
+    pub fn new(client: Arc<ClientState>) -> Self {  
+        Self {  
+            client,  
+            operations: Vec::new(),
+        }
+    }  
+  
+    pub fn api(&mut self, api_name: impl Into<String>) -> ApiBatch {  
+        ApiBatch {  
+            batch: self,  
+            api_name: api_name.into(),  
+        }  
+    }  
+  
+    pub async fn send(self) -> Result<Vec<String>, Error> {  
+        let request = TransactionRequest {  
+            operations: self.operations,  
+        };  
+  
+        let response = self  
+            .client  
+            .fetch(  
+                "/api/transactions/v1/execute",  
+                Method::POST,  
+                Some(&request),  
+                None,  
+            )  
+            .await?;  
+  
+        let result: TransactionResponse = json(response).await?;  
+        Ok(result.ids)  
+    }  
+  
+    fn add_operation(&mut self, operation: Operation) {  
+        self.operations.push(operation);  
+    }  
+}  
+  
+impl<'a> ApiBatch<'a> {  
+    pub fn create(self, record: HashMap<String, serde_json::Value>) -> &'a mut TransactionBatch {  
+        self.batch.add_operation(Operation {  
+            create: Some(CreateOperation {  
+                api_name: self.api_name,  
+                record,  
+            }),  
+            update: None,  
+            delete: None,  
+        });  
+        self.batch  
+    }  
+  
+    pub fn update(self, record_id: impl Into<String>, record: HashMap<String, serde_json::Value>) -> &'a mut TransactionBatch {  
+        self.batch.add_operation(Operation {  
+            create: None,  
+            update: Some(UpdateOperation {  
+                api_name: self.api_name,  
+                id: record_id.into(),  
+                record,  
+            }),  
+            delete: None,  
+        });  
+        self.batch  
+    }  
+  
+    pub fn delete(self, record_id: impl Into<String>) -> &'a mut TransactionBatch {  
+        self.batch.add_operation(Operation {  
+            create: None,  
+            update: None,  
+            delete: Some(DeleteOperation {  
+                api_name: self.api_name,  
+                record_id: record_id.into(),  
+            }),  
+        });  
+        self.batch  
+    }  
+}  
+
 #[derive(Clone)]
 pub struct Client {
   state: Arc<ClientState>,
@@ -817,6 +946,10 @@ impl Client {
     }
 
     return state;
+  }
+
+  pub fn transaction(&self) -> TransactionBatch {  
+    TransactionBatch::new(self.state.clone())  
   }
 }
 
