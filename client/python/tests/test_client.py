@@ -280,11 +280,10 @@ def test_transaction_create_operation(trailbase: TrailBaseFixture):
     batch.api("simple_strict_table").create(record)
     
     operation = batch._operations[0]
-    serialized = operation.to_json()
     
-    assert "Create" in serialized
-    assert serialized["Create"]["apiName"] == "simple_strict_table"
-    assert serialized["Create"]["value"] == record
+    assert "Create" in operation
+    assert operation["Create"]["api_name"] == "simple_strict_table"
+    assert operation["Create"]["value"] == record
 
 
 def test_transaction_update_operation(trailbase: TrailBaseFixture):
@@ -298,12 +297,11 @@ def test_transaction_update_operation(trailbase: TrailBaseFixture):
     batch.api("simple_strict_table").update("record1", record)
     
     operation = batch._operations[0]
-    serialized = operation.to_json()
     
-    assert "Update" in serialized
-    assert serialized["Update"]["apiName"] == "simple_strict_table"
-    assert serialized["Update"]["id"] == "record1"
-    assert serialized["Update"]["value"] == record
+    assert "Update" in operation
+    assert operation["Update"]["api_name"] == "simple_strict_table"
+    assert operation["Update"]["record_id"] == "record1"
+    assert operation["Update"]["value"] == record
 
 
 def test_transaction_delete_operation(trailbase: TrailBaseFixture):
@@ -315,11 +313,10 @@ def test_transaction_delete_operation(trailbase: TrailBaseFixture):
     batch.api("simple_strict_table").delete("record1")
     
     operation = batch._operations[0]
-    serialized = operation.to_json()
     
-    assert "Delete" in serialized
-    assert serialized["Delete"]["apiName"] == "simple_strict_table"
-    assert serialized["Delete"]["id"] == "record1"
+    assert "Delete" in operation
+    assert operation["Delete"]["api_name"] == "simple_strict_table"
+    assert operation["Delete"]["record_id"] == "record1"
 
 
 def test_transaction_multiple_operations(trailbase: TrailBaseFixture):
@@ -335,9 +332,9 @@ def test_transaction_multiple_operations(trailbase: TrailBaseFixture):
     
     # Verify operation order is preserved
     assert len(batch._operations) == 3
-    assert "Create" in batch._operations[0].to_json()
-    assert "Update" in batch._operations[1].to_json()
-    assert "Delete" in batch._operations[2].to_json()
+    assert "Create" in batch._operations[0]
+    assert "Update" in batch._operations[1]
+    assert "Delete" in batch._operations[2]
 
 
 def test_transaction_execute(trailbase: TrailBaseFixture):

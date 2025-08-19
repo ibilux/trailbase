@@ -2,6 +2,23 @@ __title__ = "trailbase"
 __description__ = "TrailBase client SDK for python."
 __version__ = "0.1.0"
 
+__all__ = [
+    "Client",
+    "CompareOp",
+    "Filter",
+    "And",
+    "Or",
+    "RecordId",
+    "User",
+    "ListResponse",
+    "Tokens",
+    "JSON",
+    "JSON_OBJECT",
+    "JSON_ARRAY",
+    "TransactionBatch",
+    "ApiBatch"
+]
+
 import httpx
 import jwt
 import logging
@@ -11,14 +28,116 @@ import json
 from enum import Enum
 from contextlib import contextmanager
 from time import time
-from typing import TypeAlias, cast, final, Any, Union
+from typing import TypeAlias, cast, final, Any, Union, List, Dict, Protocol
 
 JSON = Union[dict[str, Any], list[Any], str, int, float, bool, None]
 JSON_OBJECT = dict[str, JSON]
 JSON_ARRAY = list[JSON]
 
-# Import after type definitions to avoid circular imports
-from .transaction import TransactionBatch, ApiBatch
+# Transaction related classes and protocols
+class CreateOperation(typing.TypedDict):
+    api_name: str
+    value: JSON_OBJECT
+
+class UpdateOperation(typing.TypedDict):
+    api_name: str
+    record_id: str
+    value: JSON_OBJECT
+
+class DeleteOperation(typing.TypedDict):
+    api_name: str
+    record_id: str
+
+class Operation(typing.TypedDict, total=False):
+    Create: CreateOperation
+    Update: UpdateOperation
+    Delete: DeleteOperation
+
+class TransactionRequest(typing.TypedDict):
+    operations: List[Operation]
+
+class TransactionResponse(typing.TypedDict):
+    ids: List[str]
+
+
+class ITransactionBatch(Protocol):
+    def api(self, api_name: str) -> "IApiBatch":
+        ...
+
+    def send(self) -> List[str]:
+        ...
+
+
+class IApiBatch(Protocol):
+    def create(self, value: JSON_OBJECT) -> ITransactionBatch:
+        ...
+
+    def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch:
+        ...
+
+    def delete(self, record_id: str) -> ITransactionBatch:
+        ...
+
+
+class TransactionBatch:
+    _client: "Client"
+    _operations: List[Operation]
+
+    def __init__(self, client: "Client") -> None:
+        self._client = client
+        self._operations = []
+
+    def api(self, api_name: str) -> "ApiBatch":
+        return ApiBatch(self, api_name)
+
+    def send(self) -> List[str]:
+        request: TransactionRequest = {"operations": self._operations}
+        response = self._client.fetch(
+            "/api/transactions/v1/execute",
+            method="POST",
+            data=request,
+        )
+        if response.status_code != 200:
+            raise Exception(f"Transaction failed with status code {response.status_code}: {response.text}")
+
+        result: TransactionResponse = response.json()
+        return result.get("ids", [])
+
+
+    def add_operation(self, operation: Operation) -> None:
+        """Add an operation to the batch."""
+        self._operations.append(operation)
+
+
+class ApiBatch:
+    _batch: TransactionBatch
+    _api_name: str
+
+    def __init__(self, batch: TransactionBatch, api_name: str) -> None:
+        self._batch = batch
+        self._api_name = api_name
+
+    def create(self, value: JSON_OBJECT) -> ITransactionBatch:
+        operation: Operation = {"Create": {"api_name": self._api_name, "value": value}}
+        self._batch.add_operation(operation)
+        return self._batch
+
+    def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch:
+        operation: Operation = {"Update": {
+            "api_name": self._api_name,
+            "record_id": record_id,
+            "value": value
+        }}
+        self._batch.add_operation(operation)
+        return self._batch
+
+    def delete(self, record_id: str) -> ITransactionBatch:
+        operation: Operation = {"Delete": {
+            "api_name": self._api_name,
+            "record_id": record_id
+        }}
+        self._batch.add_operation(operation)
+        return self._batch
 
 
 class RecordId:
