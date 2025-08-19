@@ -8,16 +8,17 @@ import logging
 import typing
 import json
 
-from .transaction import TransactionBatch, ApiBatch, JSON
-
 from enum import Enum
 from contextlib import contextmanager
 from time import time
-from typing import TypeAlias, cast, final
+from typing import TypeAlias, cast, final, Any, Union
 
-JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
-JSON_OBJECT: TypeAlias = dict[str, JSON]
-JSON_ARRAY: TypeAlias = list[JSON]
+JSON = Union[dict[str, Any], list[Any], str, int, float, bool, None]
+JSON_OBJECT = dict[str, JSON]
+JSON_ARRAY = list[JSON]
+
+# Import after type definitions to avoid circular imports
+from .transaction import TransactionBatch, ApiBatch
 
 
 class RecordId:

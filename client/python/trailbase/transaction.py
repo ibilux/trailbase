@@ -1,10 +1,10 @@
 import typing
-from typing import List, Dict, Any, Protocol
+from typing import List, Dict, Any, Protocol, TYPE_CHECKING
 
-from . import Client
-
-# Type alias for JSON-serializable objects
-JSON_OBJECT = Dict[str, Any]
+if TYPE_CHECKING:
+    from . import Client, JSON_OBJECT
+else:
+    JSON_OBJECT = Dict[str, Any]
 
 class CreateOperation(typing.TypedDict):
     api_name: str
@@ -75,7 +75,8 @@ class TransactionBatch:
         return result.get("ids", [])
 
 
-    def _add_operation(self, operation: Operation) -> None:
+    def add_operation(self, operation: Operation) -> None:
+        """Add an operation to the batch."""
         self._operations.append(operation)
 
 
@@ -89,7 +90,7 @@ class ApiBatch:
 
     def create(self, value: JSON_OBJECT) -> ITransactionBatch:
         operation: Operation = {"Create": {"api_name": self._api_name, "value": value}}
-        self._batch._add_operation(operation)
+        self._batch.add_operation(operation)
         return self._batch
 
     def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch:
@@ -98,7 +99,7 @@ class ApiBatch:
             "record_id": record_id,
             "value": value
         }}
-        self._batch._add_operation(operation)
+        self._batch.add_operation(operation)
         return self._batch
 
     def delete(self, record_id: str) -> ITransactionBatch:
@@ -106,5 +107,5 @@ class ApiBatch:
             "api_name": self._api_name,
             "record_id": record_id
         }}
-        self._batch._add_operation(operation)
+        self._batch.add_operation(operation)
         return self._batch

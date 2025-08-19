@@ -3,6 +3,7 @@ package trailbase
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 )
 
 type Operation struct {
@@ -102,9 +103,19 @@ func (tb *TransactionBatch) Send() ([]string, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
 	var response TransactionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if response.IDs == nil {
+		response.IDs = []string{} // Ensure non-nil slice
 	}
 
 	return response.IDs, nil
