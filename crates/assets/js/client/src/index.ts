@@ -789,12 +789,12 @@ export const exportedForTesting = isDev
 export interface Operation {
   Create?: {
     api_name: string;
-    record: Record<string, unknown>;
+    value: Record<string, unknown>;
   };
   Update?: {
     api_name: string;
-    id: string;
-    record: Record<string, unknown>;
+    record_id: string;
+    value: Record<string, unknown>;
   };
   Delete?: {
     api_name: string;
@@ -839,14 +839,14 @@ export class TransactionBatch {
 export class ApiBatch {
   constructor(
     private batch: TransactionBatch,
-    private apiName: string
+    private apiName: string,
   ) {}
 
   create(value: Record<string, unknown>): TransactionBatch {
     this.batch.addOperation({
       Create: {
         api_name: this.apiName,
-        record: value,
+        value: value,
       },
     });
     return this.batch;
@@ -856,8 +856,8 @@ export class ApiBatch {
     this.batch.addOperation({
       Update: {
         api_name: this.apiName,
-        id: recordId,
-        record: value,
+        record_id: recordId,
+        value: value,
       },
     });
     return this.batch;

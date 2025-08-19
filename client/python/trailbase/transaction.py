@@ -1,16 +1,19 @@
 import typing
 from typing import List, Dict, Any, Protocol
 
-from . import Client, JSON_OBJECT
+from . import Client
+
+# Type alias for JSON-serializable objects
+JSON_OBJECT = Dict[str, Any]
 
 class CreateOperation(typing.TypedDict):
     api_name: str
-    record: JSON_OBJECT
+    value: JSON_OBJECT
 
 class UpdateOperation(typing.TypedDict):
     api_name: str
-    id: str
-    record: JSON_OBJECT
+    record_id: str
+    value: JSON_OBJECT
 
 class DeleteOperation(typing.TypedDict):
     api_name: str
@@ -37,10 +40,10 @@ class ITransactionBatch(Protocol):
 
 
 class IApiBatch(Protocol):
-    def create(self, record: JSON_OBJECT) -> ITransactionBatch:
+    def create(self, value: JSON_OBJECT) -> ITransactionBatch:
         ...
 
-    def update(self, record_id: str, record: JSON_OBJECT) -> ITransactionBatch:
+    def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch:
         ...
 
     def delete(self, record_id: str) -> ITransactionBatch:
@@ -84,17 +87,24 @@ class ApiBatch:
         self._batch = batch
         self._api_name = api_name
 
-    def create(self, record: JSON_OBJECT) -> ITransactionBatch:
-        operation: Operation = {"Create": {"api_name": self._api_name, "record": record}}
+    def create(self, value: JSON_OBJECT) -> ITransactionBatch:
+        operation: Operation = {"Create": {"api_name": self._api_name, "value": value}}
         self._batch._add_operation(operation)
         return self._batch
 
-    def update(self, record_id: str, record: JSON_OBJECT) -> ITransactionBatch:
-        operation: Operation = {"Update": {"api_name": self._api_name, "id": record_id, "record": record}}
+    def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch:
+        operation: Operation = {"Update": {
+            "api_name": self._api_name,
+            "record_id": record_id,
+            "value": value
+        }}
         self._batch._add_operation(operation)
         return self._batch
 
     def delete(self, record_id: str) -> ITransactionBatch:
-        operation: Operation = {"Delete": {"api_name": self._api_name, "record_id": record_id}}
+        operation: Operation = {"Delete": {
+            "api_name": self._api_name,
+            "record_id": record_id
+        }}
         self._batch._add_operation(operation)
         return self._batch

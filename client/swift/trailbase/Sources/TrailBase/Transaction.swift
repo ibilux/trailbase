@@ -1,47 +1,67 @@
 swift
 import Foundation
 
-public struct Operation: Codable {
-    public var create: CreateOperation? = nil
-    public var update: UpdateOperation? = nil
-    public var delete: DeleteOperation? = nil
+public enum Operation: Codable {
+    case create(apiName: String, value: [String: AnyCodable])
+    case update(apiName: String, recordId: String, value: [String: AnyCodable])
+    case delete(apiName: String, recordId: String)
 
     private enum CodingKeys: String, CodingKey {
         case create = "Create"
         case update = "Update"
         case delete = "Delete"
-    }
-}
-
-public struct CreateOperation: Codable {
-    public var apiName: String = ""
-    public var record: [String: AnyCodable] = [:]
-
-    private enum CodingKeys: String, CodingKey {
-        case apiName = "api_name"
-        case record = "record"
-    }
-}
-
-public struct UpdateOperation: Codable {
-    public var apiName: String = ""
-    public var id: String = ""
-    public var record: [String: AnyCodable] = [:]
-
-    private enum CodingKeys: String, CodingKey {
-        case apiName = "api_name"
-        case id = "id"
-        case record = "record"
-    }
-}
-
-public struct DeleteOperation: Codable {
-    public var apiName: String = ""
-    public var recordId: String = ""
-
-    private enum CodingKeys: String, CodingKey {
         case apiName = "api_name"
         case recordId = "record_id"
+        case value = "value"
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        switch self {
+        case let .create(apiName, value):
+            var createContainer = container.nestedContainer(keyedBy: CodingKeys.self, forKey: .create)
+            try createContainer.encode(apiName, forKey: .apiName)
+            try createContainer.encode(value, forKey: .value)
+            
+        case let .update(apiName, recordId, value):
+            var updateContainer = container.nestedContainer(keyedBy: CodingKeys.self, forKey: .update)
+            try updateContainer.encode(apiName, forKey: .apiName)
+            try updateContainer.encode(recordId, forKey: .recordId)
+            try updateContainer.encode(value, forKey: .value)
+            
+        case let .delete(apiName, recordId):
+            var deleteContainer = container.nestedContainer(keyedBy: CodingKeys.self, forKey: .delete)
+            try deleteContainer.encode(apiName, forKey: .apiName)
+            try deleteContainer.encode(recordId, forKey: .recordId)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        if let createContainer = try? container.nestedContainer(keyedBy: CodingKeys.self, forKey: .create) {
+            let apiName = try createContainer.decode(String.self, forKey: .apiName)
+            let value = try createContainer.decode([String: AnyCodable].self, forKey: .value)
+            self = .create(apiName: apiName, value: value)
+            
+        } else if let updateContainer = try? container.nestedContainer(keyedBy: CodingKeys.self, forKey: .update) {
+            let apiName = try updateContainer.decode(String.self, forKey: .apiName)
+            let recordId = try updateContainer.decode(String.self, forKey: .recordId)
+            let value = try updateContainer.decode([String: AnyCodable].self, forKey: .value)
+            self = .update(apiName: apiName, recordId: recordId, value: value)
+            
+        } else if let deleteContainer = try? container.nestedContainer(keyedBy: CodingKeys.self, forKey: .delete) {
+            let apiName = try deleteContainer.decode(String.self, forKey: .apiName)
+            let recordId = try deleteContainer.decode(String.self, forKey: .recordId)
+            self = .delete(apiName: apiName, recordId: recordId)
+            
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid Operation type"
+            )
+        }
     }
 }
 
@@ -101,18 +121,18 @@ public class ApiBatch {
         self.apiName = apiName
     }
 
-    public func create(record: [String: AnyCodable]) -> TransactionBatch {
-        batch.addOperation(Operation(create: CreateOperation(apiName: apiName, record: record)))
+    public func create(value: [String: AnyCodable]) -> TransactionBatch {
+        batch.addOperation(.create(apiName: apiName, value: value))
         return batch
     }
 
-    public func update(recordId: String, record: [String: AnyCodable]) -> TransactionBatch {
-        batch.addOperation(Operation(update: UpdateOperation(apiName: apiName, id: recordId, record: record)))
+    public func update(recordId: String, value: [String: AnyCodable]) -> TransactionBatch {
+        batch.addOperation(.update(apiName: apiName, recordId: recordId, value: value))
         return batch
     }
 
     public func delete(recordId: String) -> TransactionBatch {
-        batch.addOperation(Operation(delete: DeleteOperation(apiName: apiName, recordId: recordId)))
+        batch.addOperation(.delete(apiName: apiName, recordId: recordId))
         return batch
     }
 }

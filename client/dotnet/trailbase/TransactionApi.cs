@@ -7,40 +7,110 @@ using System.Threading.Tasks;
   
 namespace TrailBase.Client  
 {
-    public class Operation
+    [JsonConverter(typeof(OperationJsonConverter))]
+    public abstract class Operation
     {
-        [System.Text.Json.Serialization.JsonPropertyName("Create")]
-        public CreateOperation? Create { get; set; }
-        [System.Text.Json.Serialization.JsonPropertyName("Update")]
-        public UpdateOperation? Update { get; set; }
-        [System.Text.Json.Serialization.JsonPropertyName("Delete")]
-        public DeleteOperation? Delete { get; set; }
+        [JsonPropertyName("api_name")]
+        public string ApiName { get; set; } = string.Empty;
+
+        public static Operation Create(string apiName, Dictionary<string, object> value)
+            => new CreateOperation { ApiName = apiName, Value = value };
+
+        public static Operation Update(string apiName, string recordId, Dictionary<string, object> value)
+            => new UpdateOperation { ApiName = apiName, RecordId = recordId, Value = value };
+
+        public static Operation Delete(string apiName, string recordId)
+            => new DeleteOperation { ApiName = apiName, RecordId = recordId };
     }
 
-    public class CreateOperation
+    public class CreateOperation : Operation
     {
-        [System.Text.Json.Serialization.JsonPropertyName("api_name")]
-        public string ApiName { get; set; } = string.Empty;
-        [System.Text.Json.Serialization.JsonPropertyName("record")]
-        public Dictionary<string, object> Record { get; set; } = new();
+        [JsonPropertyName("value")]
+        public Dictionary<string, object> Value { get; set; } = new();
     }
 
-    public class UpdateOperation
+    public class UpdateOperation : Operation
     {
-        [System.Text.Json.Serialization.JsonPropertyName("api_name")]
-        public string ApiName { get; set; } = string.Empty;
-        [System.Text.Json.Serialization.JsonPropertyName("id")]
-        public string Id { get; set; } = string.Empty;
-        [System.Text.Json.Serialization.JsonPropertyName("record")]
-        public Dictionary<string, object> Record { get; set; } = new();
-    }
-
-    public class DeleteOperation
-    {
-        [System.Text.Json.Serialization.JsonPropertyName("api_name")]
-        public string ApiName { get; set; } = string.Empty;
-        [System.Text.Json.Serialization.JsonPropertyName("record_id")]
+        [JsonPropertyName("record_id")]
         public string RecordId { get; set; } = string.Empty;
+
+        [JsonPropertyName("value")]
+        public Dictionary<string, object> Value { get; set; } = new();
+    }
+
+    public class DeleteOperation : Operation
+    {
+        [JsonPropertyName("record_id")]
+        public string RecordId { get; set; } = string.Empty;
+    }
+
+    public class OperationJsonConverter : JsonConverter<Operation>
+    {
+        public override Operation? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType != JsonTokenType.StartObject)
+                throw new JsonException();
+
+            using (var doc = JsonDocument.ParseValue(ref reader))
+            {
+                var root = doc.RootElement;
+                
+                if (root.TryGetProperty("Create", out var createElem))
+                {
+                    return JsonSerializer.Deserialize<CreateOperation>(createElem.GetRawText(), options);
+                }
+                else if (root.TryGetProperty("Update", out var updateElem))
+                {
+                    return JsonSerializer.Deserialize<UpdateOperation>(updateElem.GetRawText(), options);
+                }
+                else if (root.TryGetProperty("Delete", out var deleteElem))
+                {
+                    return JsonSerializer.Deserialize<DeleteOperation>(deleteElem.GetRawText(), options);
+                }
+                
+                throw new JsonException("Unknown operation type");
+            }
+        }
+
+        public override void Write(Utf8JsonWriter writer, Operation value, JsonSerializerOptions options)
+        {
+            writer.WriteStartObject();
+            
+            switch (value)
+            {
+                case CreateOperation create:
+                    writer.WritePropertyName("Create");
+                    writer.WriteStartObject();
+                    writer.WriteString("api_name", create.ApiName);
+                    writer.WritePropertyName("value");
+                    JsonSerializer.Serialize(writer, create.Value, options);
+                    writer.WriteEndObject();
+                    break;
+                    
+                case UpdateOperation update:
+                    writer.WritePropertyName("Update");
+                    writer.WriteStartObject();
+                    writer.WriteString("api_name", update.ApiName);
+                    writer.WriteString("record_id", update.RecordId);
+                    writer.WritePropertyName("value");
+                    JsonSerializer.Serialize(writer, update.Value, options);
+                    writer.WriteEndObject();
+                    break;
+                    
+                case DeleteOperation delete:
+                    writer.WritePropertyName("Delete");
+                    writer.WriteStartObject();
+                    writer.WriteString("api_name", delete.ApiName);
+                    writer.WriteString("record_id", delete.RecordId);
+                    writer.WriteEndObject();
+                    break;
+                    
+                default:
+                    throw new JsonException($"Unknown operation type: {value.GetType()}");
+            }
+            
+            writer.WriteEndObject();
+        }
     }
 
     public class TransactionRequest
@@ -116,43 +186,21 @@ namespace TrailBase.Client
             _apiName = apiName;  
         }  
   
-        public ITransactionBatch Create(Dictionary<string, object> record)  
+        public ITransactionBatch Create(Dictionary<string, object> value)  
         {  
-            _batch.AddOperation(new Operation  
-            {  
-                Create = new CreateOperation  
-                {  
-                    ApiName = _apiName,  
-                    Record = record  
-                }  
-            });  
+            _batch.AddOperation(Operation.Create(_apiName, value));
             return _batch;  
         }  
   
-        public ITransactionBatch Update(string recordId, Dictionary<string, object> record)  
+        public ITransactionBatch Update(string recordId, Dictionary<string, object> value)  
         {  
-            _batch.AddOperation(new Operation  
-            {  
-                Update = new UpdateOperation  
-                {  
-                    ApiName = _apiName,  
-                    Id = recordId,  
-                    Record = record  
-                }  
-            });  
+            _batch.AddOperation(Operation.Update(_apiName, recordId, value));
             return _batch;  
         }  
   
         public ITransactionBatch Delete(string recordId)  
         {  
-            _batch.AddOperation(new Operation  
-            {  
-                Delete = new DeleteOperation  
-                {  
-                    ApiName = _apiName,  
-                    RecordId = recordId  
-                }  
-            });  
+            _batch.AddOperation(Operation.Delete(_apiName, recordId));
             return _batch;  
         }  
     }  

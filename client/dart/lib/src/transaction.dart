@@ -28,30 +28,30 @@ class Operation {
 
 class CreateOperation {
   String apiName;
-  Map<String, dynamic> record;
+  Map<String, dynamic> value;
 
-  CreateOperation({required this.apiName, required this.record});
+  CreateOperation({required this.apiName, required this.value});
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {};
     data['api_name'] = apiName;
-    data['record'] = record;
+    data['value'] = value;
     return data;
   }
 }
 
 class UpdateOperation {
   String apiName;
-  String id;
-  Map<String, dynamic> record;
+  String recordId;
+  Map<String, dynamic> value;
 
-  UpdateOperation({required this.apiName, required this.id, required this.record});
+  UpdateOperation({required this.apiName, required this.recordId, required this.value});
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {};
     data['api_name'] = apiName;
-    data['id'] = id;
-    data['record'] = record;
+    data['record_id'] = recordId;
+    data['value'] = value;
     return data;
   }
 }
@@ -100,8 +100,8 @@ abstract class ITransactionBatch {
 }
 
 abstract class IApiBatch {
-  ITransactionBatch create(Map<String, dynamic> record);
-  ITransactionBatch update(String recordId, Map<String, dynamic> record);
+  ITransactionBatch create(Map<String, dynamic> value);
+  ITransactionBatch update(String recordId, Map<String, dynamic> value);
   ITransactionBatch delete(String recordId);
 }
 
@@ -145,23 +145,23 @@ class ApiBatch implements IApiBatch {
   ApiBatch(this._batch, this._apiName);
 
   @override
-  ITransactionBatch create(Map<String, dynamic> record) {
+  ITransactionBatch create(Map<String, dynamic> value) {
     _batch.addOperation(Operation(
       create: CreateOperation(
         apiName: _apiName,
-        record: record,
+        value: value,
       ),
     ));
     return _batch;
   }
 
   @override
-  ITransactionBatch update(String recordId, Map<String, dynamic> record) {
+  ITransactionBatch update(String recordId, Map<String, dynamic> value) {
     _batch.addOperation(Operation(
       update: UpdateOperation(
         apiName: _apiName,
-        id: recordId,
-        record: record,
+        recordId: recordId,
+        value: value,
       ),
     ));
     return _batch;
