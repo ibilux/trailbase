@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import { expect, test } from "vitest";
-import { initClient, urlSafeBase64Encode } from "../../src/index";
+import { initClient, urlSafeBase64Encode, TransactionBatch } from "../../src/index";
 import type { Client, Event } from "../../src/index";
 import { status } from "http-status";
 import { v7 as uuidv7, parse as uuidParse } from "uuid";
@@ -329,6 +329,68 @@ test("realtime subscribe specific record tests", async () => {
   expect(events).toHaveLength(2);
   expect(events[0]["Update"]["text_not_null"]).equals(updatedMessage);
   expect(events[1]["Delete"]["text_not_null"]).equals(updatedMessage);
+});
+
+test("transaction tests", async () => {
+  const client = await connect();
+  const now = new Date().getTime();
+
+  // Test transaction with create operation
+  {
+    const batch = client.transaction();
+    const record = { text_not_null: `ts transaction create test: =?&${now}` };
+    batch.api("simple_strict_table").create(record);
+
+    const ids = await batch.send();
+    expect(ids).toHaveLength(1);
+
+    // Verify record was created
+    const api = client.records("simple_strict_table");
+    const createdRecord = await api.read(ids[0]);
+    expect(createdRecord.text_not_null).toBe(record.text_not_null);
+  }
+
+  // Test transaction with update operation
+  {
+    const api = client.records("simple_strict_table");
+    const record = { text_not_null: `ts transaction update test original: =?&${now}` };
+    const id = await api.create(record);
+
+    const batch = client.transaction();
+    const updatedRecord = { text_not_null: `ts transaction update test modified: =?&${now}` };
+    batch.api("simple_strict_table").update(id as string, updatedRecord);
+
+    await batch.send();
+    const readRecord = await api.read(id);
+    expect(readRecord.text_not_null).toBe(updatedRecord.text_not_null);
+  }
+
+  // Test transaction with delete operation
+  {
+    const api = client.records("simple_strict_table");
+    const record = { text_not_null: `ts transaction delete test: =?&${now}` };
+    const id = await api.create(record);
+
+    const batch = client.transaction();
+    batch.api("simple_strict_table").delete(id as string);
+
+    await batch.send();
+    await expect(api.read(id)).rejects.toThrow();
+  }
+
+  // Test transaction with multiple operations
+  {
+    const batch = client.transaction();
+    
+    // Add multiple operations in sequence
+    batch.api("simple_strict_table").create({ text_not_null: `ts transaction multi create: =?&${now}` });
+    batch.api("simple_strict_table").update("record1", { text_not_null: `ts transaction multi update: =?&${now}` });
+    batch.api("simple_strict_table").delete("record2");
+    
+    // Send the batch and ensure no errors
+    const ids = await batch.send();
+    expect(ids).toHaveLength(1); // Only create operation returns an ID
+  }
 });
 
 test("realtime subscribe table tests", async () => {

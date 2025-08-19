@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use trailbase_client::{
   Client, CompareOp, DbEvent, Filter, ListArguments, ListResponse, Pagination, ReadArguments,
+  transaction::{Operation, TransactionBatch},
 };
 
 struct Server {
@@ -410,6 +411,113 @@ fn integration_test() {
 
   runtime.block_on(subscription_test());
   println!("Ran subscription tests");
+  
+  runtime.block_on(transaction_tests());
+  println!("Ran transaction tests");
+}
+
+async fn transaction_tests() {
+  let client = connect().await;
+  let now = now();
+
+  // Test create operation
+  {
+    let mut batch = client.transaction();
+    let record = json!({"text_not_null": format!("rust transaction create test: =?&{now}")});
+    batch.api("simple_strict_table").create(&record);
+    
+    let operation = &batch.operations[0];
+    let json = serde_json::to_value(operation).unwrap();
+    
+    assert!(json.get("Create").is_some());
+    assert_eq!(json["Create"]["apiName"], "simple_strict_table");
+    assert_eq!(json["Create"]["value"], record);
+
+    // Test actual creation
+    let ids = batch.send().await.unwrap();
+    assert_eq!(ids.len(), 1);
+
+    // Verify the record was created
+    let api = client.records("simple_strict_table");
+    let created_record: SimpleStrict = api.read(&ids[0]).await.unwrap();
+    assert_eq!(created_record.text_not_null, record["text_not_null"].as_str().unwrap());
+  }
+
+  // Test update operation
+  {
+    let api = client.records("simple_strict_table");
+    let create_record = json!({
+      "text_not_null": format!("rust transaction update test original: =?&{now}")
+    });
+    let id = api.create(create_record).await.unwrap();
+
+    let mut batch = client.transaction();
+    let update_record = json!({
+      "text_not_null": format!("rust transaction update test modified: =?&{now}")
+    });
+    batch.api("simple_strict_table").update(&id, &update_record);
+    
+    let operation = &batch.operations[0];
+    let json = serde_json::to_value(operation).unwrap();
+    
+    assert!(json.get("Update").is_some());
+    assert_eq!(json["Update"]["apiName"], "simple_strict_table");
+    assert_eq!(json["Update"]["id"], id);
+    assert_eq!(json["Update"]["value"], update_record);
+
+    // Test actual update
+    batch.send().await.unwrap();
+    
+    let updated: SimpleStrict = api.read(&id).await.unwrap();
+    assert_eq!(updated.text_not_null, update_record["text_not_null"].as_str().unwrap());
+  }
+
+  // Test delete operation
+  {
+    let api = client.records("simple_strict_table");
+    let create_record = json!({
+      "text_not_null": format!("rust transaction delete test: =?&{now}")
+    });
+    let id = api.create(create_record).await.unwrap();
+
+    let mut batch = client.transaction();
+    batch.api("simple_strict_table").delete(&id);
+    
+    let operation = &batch.operations[0];
+    let json = serde_json::to_value(operation).unwrap();
+    
+    assert!(json.get("Delete").is_some());
+    assert_eq!(json["Delete"]["apiName"], "simple_strict_table");
+    assert_eq!(json["Delete"]["id"], id);
+
+    // Test actual deletion
+    batch.send().await.unwrap();
+    
+    let result = api.read::<SimpleStrict>(&id).await;
+    assert!(result.is_err());
+  }
+
+  // Test multiple operations
+  {
+    let mut batch = client.transaction();
+    
+    batch.api("simple_strict_table").create(&json!({
+      "text_not_null": format!("rust transaction multi create: =?&{now}")
+    }));
+    batch.api("simple_strict_table").update("record1", &json!({
+      "text_not_null": format!("rust transaction multi update: =?&{now}")
+    }));
+    batch.api("simple_strict_table").delete("record2");
+    
+    assert_eq!(batch.operations.len(), 3);
+    let json: Vec<_> = batch.operations.iter()
+      .map(|op| serde_json::to_value(op).unwrap())
+      .collect();
+      
+    assert!(json[0].get("Create").is_some());
+    assert!(json[1].get("Update").is_some());
+    assert!(json[2].get("Delete").is_some());
+  }
 }
 
 fn now() -> u64 {

@@ -1,11 +1,11 @@
-using System;  
-using System.Collections.Generic;  
-using System.Net.Http;  
-using System.Text;  
-using System.Text.Json;  
-using System.Threading.Tasks;  
-  
-namespace TrailBase.Client  
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+namespace TrailBase.Client
 {
     [JsonConverter(typeof(OperationJsonConverter))]
     public abstract class Operation
@@ -54,7 +54,7 @@ namespace TrailBase.Client
             using (var doc = JsonDocument.ParseValue(ref reader))
             {
                 var root = doc.RootElement;
-                
+
                 if (root.TryGetProperty("Create", out var createElem))
                 {
                     return JsonSerializer.Deserialize<CreateOperation>(createElem.GetRawText(), options);
@@ -67,7 +67,7 @@ namespace TrailBase.Client
                 {
                     return JsonSerializer.Deserialize<DeleteOperation>(deleteElem.GetRawText(), options);
                 }
-                
+
                 throw new JsonException("Unknown operation type");
             }
         }
@@ -75,7 +75,7 @@ namespace TrailBase.Client
         public override void Write(Utf8JsonWriter writer, Operation value, JsonSerializerOptions options)
         {
             writer.WriteStartObject();
-            
+
             switch (value)
             {
                 case CreateOperation create:
@@ -86,7 +86,7 @@ namespace TrailBase.Client
                     JsonSerializer.Serialize(writer, create.Value, options);
                     writer.WriteEndObject();
                     break;
-                    
+
                 case UpdateOperation update:
                     writer.WritePropertyName("Update");
                     writer.WriteStartObject();
@@ -96,7 +96,7 @@ namespace TrailBase.Client
                     JsonSerializer.Serialize(writer, update.Value, options);
                     writer.WriteEndObject();
                     break;
-                    
+
                 case DeleteOperation delete:
                     writer.WritePropertyName("Delete");
                     writer.WriteStartObject();
@@ -104,11 +104,11 @@ namespace TrailBase.Client
                     writer.WriteString("record_id", delete.RecordId);
                     writer.WriteEndObject();
                     break;
-                    
+
                 default:
                     throw new JsonException($"Unknown operation type: {value.GetType()}");
             }
-            
+
             writer.WriteEndObject();
         }
     }
@@ -124,84 +124,84 @@ namespace TrailBase.Client
         [System.Text.Json.Serialization.JsonPropertyName("ids")]
         public List<string> Ids { get; set; } = new();
     }
-  
-    public interface ITransactionBatch  
-    {  
-        IApiBatch Api(string apiName);  
-        Task<List<string>> SendAsync();  
-    }  
-  
-    public interface IApiBatch  
-    {  
-        ITransactionBatch Create(Dictionary<string, object> record);  
-        ITransactionBatch Update(string recordId, Dictionary<string, object> record);  
-        ITransactionBatch Delete(string recordId);  
-    }  
-  
-    public class TransactionBatch : ITransactionBatch  
-    {  
-        private readonly Client _client;  
-        private readonly List<Operation> _operations = new();  
-  
-        public TransactionBatch(Client client)  
-        {  
-            _client = client;  
-        }  
-  
-        public IApiBatch Api(string apiName)  
-        {  
-            return new ApiBatch(this, apiName);  
-        }  
-  
-        public async Task<List<string>> SendAsync()  
-        {  
-            var request = new TransactionRequest { Operations = _operations };  
-            var response = await _client.Fetch(  
-                "/api/transactions/v1/execute",  
-                HttpMethod.Post,  
-                JsonContent.Create(request),  
-                null  
-            );  
-  
-            string json = await response.Content.ReadAsStringAsync();  
-            var result = JsonSerializer.Deserialize<TransactionResponse>(json);  
-              
-            return result?.Ids ?? new List<string>();  
-        }  
-  
-        internal void AddOperation(Operation operation)  
-        {  
-            _operations.Add(operation);  
-        }  
-    }  
-  
-    public class ApiBatch : IApiBatch  
-    {  
-        private readonly TransactionBatch _batch;  
-        private readonly string _apiName;  
-  
-        public ApiBatch(TransactionBatch batch, string apiName)  
-        {  
-            _batch = batch;  
-            _apiName = apiName;  
-        }  
-  
-        public ITransactionBatch Create(Dictionary<string, object> value)  
-        {  
+
+    public interface ITransactionBatch
+    {
+        IApiBatch Api(string apiName);
+        Task<List<string>> SendAsync();
+    }
+
+    public interface IApiBatch
+    {
+        ITransactionBatch Create(Dictionary<string, object> record);
+        ITransactionBatch Update(string recordId, Dictionary<string, object> record);
+        ITransactionBatch Delete(string recordId);
+    }
+
+    public class TransactionBatch : ITransactionBatch
+    {
+        private readonly Client _client;
+        private readonly List<Operation> _operations = new();
+
+        public TransactionBatch(Client client)
+        {
+            _client = client;
+        }
+
+        public IApiBatch Api(string apiName)
+        {
+            return new ApiBatch(this, apiName);
+        }
+
+        public async Task<List<string>> SendAsync()
+        {
+            var request = new TransactionRequest { Operations = _operations };
+            var response = await _client.Fetch(
+                "/api/transactions/v1/execute",
+                HttpMethod.Post,
+                JsonContent.Create(request),
+                null
+            );
+
+            string json = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<TransactionResponse>(json);
+
+            return result?.Ids ?? new List<string>();
+        }
+
+        internal void AddOperation(Operation operation)
+        {
+            _operations.Add(operation);
+        }
+    }
+
+    public class ApiBatch : IApiBatch
+    {
+        private readonly TransactionBatch _batch;
+        private readonly string _apiName;
+
+        public ApiBatch(TransactionBatch batch, string apiName)
+        {
+            _batch = batch;
+            _apiName = apiName;
+        }
+
+        public ITransactionBatch Create(Dictionary<string, object> value)
+        {
             _batch.AddOperation(Operation.Create(_apiName, value));
-            return _batch;  
-        }  
-  
-        public ITransactionBatch Update(string recordId, Dictionary<string, object> value)  
-        {  
+            return _batch;
+        }
+
+        public ITransactionBatch Update(string recordId, Dictionary<string, object> value)
+        {
             _batch.AddOperation(Operation.Update(_apiName, recordId, value));
-            return _batch;  
-        }  
-  
-        public ITransactionBatch Delete(string recordId)  
-        {  
+            return _batch;
+        }
+
+        public ITransactionBatch Delete(string recordId)
+        {
             _batch.AddOperation(Operation.Delete(_apiName, recordId));
-            return _batch;  
-        }  
-    }  
+            return _batch;
+        }
+    }
 }

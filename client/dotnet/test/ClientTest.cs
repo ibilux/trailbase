@@ -435,4 +435,128 @@ public class ClientTest : IClassFixture<ClientTestFixture> {
     Assert.True(tableEvents[2] is DeleteEvent);
     Assert.Equal(UpdatedMessage, tableEvents[2].Value!["text_not_null"]?.ToString());
   }
+
+  [Fact]
+  public async Task TransactionCreateOperationTest() {
+    var client = await ClientTest.Connect();
+    var batch = client.Transaction();
+    var api = client.Records("simple_strict_table");
+
+    var now = DateTimeOffset.Now.ToUnixTimeSeconds();
+    var suffix = $"{now} {System.Environment.Version} transaction";
+    var record = new SimpleStrict(null, null, null, $"C# transaction create test: {suffix}");
+    
+    batch.Api("simple_strict_table").Create(record, SerializeSimpleStrictContext.Default.SimpleStrict);
+    
+    var operation = batch._operations[0];
+    var json = JsonSerializer.SerializeToDocument(operation);
+    
+    Assert.True(json.RootElement.TryGetProperty("Create", out var createOp));
+    Assert.Equal("simple_strict_table", createOp.GetProperty("apiName").GetString());
+    Assert.Equal(record.text_not_null, createOp.GetProperty("value").GetProperty("text_not_null").GetString());
+
+    // Test actual creation
+    var ids = await batch.Send();
+    Assert.Single(ids);
+
+    var createdRecord = await api.Read<SimpleStrict>(ids[0]);
+    Assert.Equal(record.text_not_null, createdRecord!.text_not_null);
+  }
+
+  [Fact]
+  public async Task TransactionUpdateOperationTest() {
+    var client = await ClientTest.Connect();
+    var batch = client.Transaction();
+    var api = client.Records("simple_strict_table");
+
+    // First create a record to update
+    var now = DateTimeOffset.Now.ToUnixTimeSeconds();
+    var suffix = $"{now} {System.Environment.Version} transaction";
+    var createRecord = new SimpleStrict(null, null, null, $"C# transaction update test original: {suffix}");
+    var id = await api.Create(createRecord, SerializeSimpleStrictContext.Default.SimpleStrict);
+
+    // Update operation
+    var updateRecord = new SimpleStrict(null, null, null, $"C# transaction update test modified: {suffix}");
+    batch.Api("simple_strict_table").Update(id, updateRecord, SerializeSimpleStrictContext.Default.SimpleStrict);
+
+    var operation = batch._operations[0];
+    var json = JsonSerializer.SerializeToDocument(operation);
+
+    Assert.True(json.RootElement.TryGetProperty("Update", out var updateOp));
+    Assert.Equal("simple_strict_table", updateOp.GetProperty("apiName").GetString());
+    Assert.Equal(id.ToString(), updateOp.GetProperty("id").GetString());
+    Assert.Equal(updateRecord.text_not_null, updateOp.GetProperty("value").GetProperty("text_not_null").GetString());
+
+    // Test actual update
+    await batch.Send();
+    var updatedRecord = await api.Read<SimpleStrict>(id);
+    Assert.Equal(updateRecord.text_not_null, updatedRecord!.text_not_null);
+  }
+
+  [Fact]
+  public async Task TransactionDeleteOperationTest() {
+    var client = await ClientTest.Connect();
+    var batch = client.Transaction();
+    var api = client.Records("simple_strict_table");
+
+    // First create a record to delete
+    var now = DateTimeOffset.Now.ToUnixTimeSeconds();
+    var suffix = $"{now} {System.Environment.Version} transaction";
+    var createRecord = new SimpleStrict(null, null, null, $"C# transaction delete test: {suffix}");
+    var id = await api.Create(createRecord, SerializeSimpleStrictContext.Default.SimpleStrict);
+
+    batch.Api("simple_strict_table").Delete(id);
+
+    var operation = batch._operations[0];
+    var json = JsonSerializer.SerializeToDocument(operation);
+
+    Assert.True(json.RootElement.TryGetProperty("Delete", out var deleteOp));
+    Assert.Equal("simple_strict_table", deleteOp.GetProperty("apiName").GetString());
+    Assert.Equal(id.ToString(), deleteOp.GetProperty("id").GetString());
+
+    // Test actual deletion
+    await batch.Send();
+    await Assert.ThrowsAsync<Exception>(() => api.Read<SimpleStrict>(id));
+  }
+
+  [Fact]
+  public async Task TransactionMultipleOperationsTest() {
+    var client = await ClientTest.Connect();
+    var batch = client.Transaction();
+    var api = client.Records("simple_strict_table");
+
+    var now = DateTimeOffset.Now.ToUnixTimeSeconds();
+    var suffix = $"{now} {System.Environment.Version} transaction";
+
+    // Create operation
+    var createRecord = new SimpleStrict(null, null, null, $"C# transaction multi create: {suffix}");
+    batch.Api("simple_strict_table").Create(createRecord, SerializeSimpleStrictContext.Default.SimpleStrict);
+
+    // Update operation
+    var updateRecord = new SimpleStrict(null, null, null, $"C# transaction multi update: {suffix}");
+    batch.Api("simple_strict_table").Update("record1", updateRecord, SerializeSimpleStrictContext.Default.SimpleStrict);
+
+    // Delete operation
+    batch.Api("simple_strict_table").Delete("record2");
+
+    // Verify operation order
+    Assert.Equal(3, batch._operations.Count);
+    
+    var createJson = JsonSerializer.SerializeToDocument(batch._operations[0]);
+    Assert.True(createJson.RootElement.TryGetProperty("Create", out _));
+    
+    var updateJson = JsonSerializer.SerializeToDocument(batch._operations[1]);
+    Assert.True(updateJson.RootElement.TryGetProperty("Update", out _));
+    
+    var deleteJson = JsonSerializer.SerializeToDocument(batch._operations[2]);
+    Assert.True(deleteJson.RootElement.TryGetProperty("Delete", out _));
+
+    // Test execution order with real operations
+    var ids = await batch.Send();
+    Assert.Single(ids); // Only create operation returns an ID
+
+    // Verify the record was created
+    var createdRecord = await api.Read<SimpleStrict>(ids[0]);
+    Assert.Equal(createRecord.text_not_null, createdRecord!.text_not_null);
+  }
 }

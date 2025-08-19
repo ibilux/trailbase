@@ -269,4 +269,109 @@ def test_subscriptions(trailbase: TrailBaseFixture):
     assert "Insert" in events[0]
 
 
+def test_transaction_create_operation(trailbase: TrailBaseFixture):
+    assert trailbase.isUp()
+    
+    client = connect()
+    batch = client.transaction()
+    
+    now = int(time())
+    record = {"text_not_null": f"transaction test create: {now}"}
+    batch.api("simple_strict_table").create(record)
+    
+    operation = batch._operations[0]
+    serialized = operation.to_json()
+    
+    assert "Create" in serialized
+    assert serialized["Create"]["apiName"] == "simple_strict_table"
+    assert serialized["Create"]["value"] == record
+
+
+def test_transaction_update_operation(trailbase: TrailBaseFixture):
+    assert trailbase.isUp()
+    
+    client = connect()
+    batch = client.transaction()
+    
+    now = int(time())
+    record = {"text_not_null": f"transaction test update: {now}"}
+    batch.api("simple_strict_table").update("record1", record)
+    
+    operation = batch._operations[0]
+    serialized = operation.to_json()
+    
+    assert "Update" in serialized
+    assert serialized["Update"]["apiName"] == "simple_strict_table"
+    assert serialized["Update"]["id"] == "record1"
+    assert serialized["Update"]["value"] == record
+
+
+def test_transaction_delete_operation(trailbase: TrailBaseFixture):
+    assert trailbase.isUp()
+    
+    client = connect()
+    batch = client.transaction()
+    
+    batch.api("simple_strict_table").delete("record1")
+    
+    operation = batch._operations[0]
+    serialized = operation.to_json()
+    
+    assert "Delete" in serialized
+    assert serialized["Delete"]["apiName"] == "simple_strict_table"
+    assert serialized["Delete"]["id"] == "record1"
+
+
+def test_transaction_multiple_operations(trailbase: TrailBaseFixture):
+    assert trailbase.isUp()
+    
+    client = connect()
+    batch = client.transaction()
+    
+    now = int(time())
+    batch.api("simple_strict_table").create({"text_not_null": f"transaction test first: {now}"})
+    batch.api("simple_strict_table").update("record1", {"text_not_null": f"transaction test second: {now}"})
+    batch.api("simple_strict_table").delete("record2")
+    
+    # Verify operation order is preserved
+    assert len(batch._operations) == 3
+    assert "Create" in batch._operations[0].to_json()
+    assert "Update" in batch._operations[1].to_json()
+    assert "Delete" in batch._operations[2].to_json()
+
+
+def test_transaction_execute(trailbase: TrailBaseFixture):
+    assert trailbase.isUp()
+    
+    client = connect()
+    batch = client.transaction()
+    api = client.records("simple_strict_table")
+    
+    # Create a record through transaction
+    now = int(time())
+    record = {"text_not_null": f"transaction test execute: {now}"}
+    batch.api("simple_strict_table").create(record)
+    
+    # Execute the transaction and get the IDs
+    ids = batch.send()
+    assert len(ids) == 1
+    
+    # Verify the record was created
+    created_record = api.read(ids[0])
+    assert created_record["text_not_null"] == record["text_not_null"]
+    
+    # Update and delete in the same transaction
+    batch = client.transaction()
+    update_record = {"text_not_null": f"transaction test updated: {now}"}
+    batch.api("simple_strict_table").update(ids[0], update_record)
+    batch.api("simple_strict_table").delete(ids[0])
+    
+    # Execute the transaction
+    batch.send()
+    
+    # Verify the record was deleted
+    with pytest.raises(Exception):
+        api.read(ids[0])
+
+
 logger = logging.getLogger(__name__)
