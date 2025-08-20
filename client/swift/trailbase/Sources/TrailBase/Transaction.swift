@@ -73,10 +73,16 @@ public struct TransactionRequest: Codable {
 }
 
 public struct TransactionResponse: Codable {
-    public var ids: [String] = []
+    public var ids: [RecordId] = []
 
     private enum CodingKeys: String, CodingKey {
         case ids = "ids"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let idStrings = try container.decode([String].self, forKey: .ids)
+        self.ids = idStrings.map { RecordId(id: $0) }
     }
 }
 
@@ -92,7 +98,7 @@ public class TransactionBatch {
         return ApiBatch(batch: self, apiName: apiName)
     }
 
-    public func send() async throws -> [String] {
+    public func send() async throws -> [RecordId] {
         let request = TransactionRequest(operations: operations)
         let body = try JSONEncoder().encode(request)
 

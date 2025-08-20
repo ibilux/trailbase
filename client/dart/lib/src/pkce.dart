@@ -4,13 +4,14 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 /// A pair of (pkceCodeVerifier, pkceCodeChallenge).
-typedef PkcePair = ({
-  /// The random code verifier.
-  String verifier,
+typedef PkcePair =
+    ({
+      /// The random code verifier.
+      String verifier,
 
-  /// The code challenge, computed as base64UrlNoPad(sha256(verifier)).
-  String challenge
-});
+      /// The code challenge, computed as base64UrlNoPad(sha256(verifier)).
+      String challenge,
+    });
 
 extension Pkce on PkcePair {
   /// Generates a [PkcePair].
@@ -29,13 +30,13 @@ extension Pkce on PkcePair {
 
     final random = Random.secure();
     final verifier =
-        base64UrlEncode(List.generate(length, (_) => random.nextInt(256)))
-            .split('=')
-            .first;
+        base64UrlEncode(
+          List.generate(length, (_) => random.nextInt(256)),
+        ).split('=').first;
     final challenge =
-        base64UrlEncode(sha256.convert(ascii.encode(verifier)).bytes)
-            .split('=')
-            .first;
+        base64UrlEncode(
+          sha256.convert(ascii.encode(verifier)).bytes,
+        ).split('=').first;
 
     return (verifier: verifier, challenge: challenge);
   }

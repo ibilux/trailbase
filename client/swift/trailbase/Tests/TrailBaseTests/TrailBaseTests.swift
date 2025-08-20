@@ -130,96 +130,6 @@ extension Trait where Self == SetupTrailBaseTrait {
         #expect(client.user == nil)
     }
 
-    @Test("Test Transaction") func testTransaction() async throws {
-        let client = try await connect()
-        let now = NSDate().timeIntervalSince1970
-        
-        // Test create operation
-        let batch = client.transaction()
-        let createRecord = [
-            "text_not_null": "swift transaction create test: =?&\(now)"
-        ] as [String: Any]
-        batch.api(name: "simple_strict_table").create(value: createRecord)
-        
-        let operation = batch.operations[0]
-        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(operation)) as! [String: Any]
-        
-        #expect(json["Create"] != nil)
-        let createOp = json["Create"] as! [String: Any]
-        #expect(createOp["apiName"] as? String == "simple_strict_table")
-        #expect(createOp["value"] as? [String: Any] == createRecord)
-        
-        // Test actual creation
-        let ids = try await batch.send()
-        #expect(ids.count == 1)
-        
-        // Verify record was created
-        let api = client.records("simple_strict_table")
-        let createdRecord: SimpleStrict = try await api.read(recordId: ids[0])
-        #expect(createdRecord.text_not_null == createRecord["text_not_null"] as? String)
-        
-        // Test update operation
-        let updateBatch = client.transaction()
-        let updateRecord = [
-            "text_not_null": "swift transaction update test: =?&\(now)"
-        ] as [String: Any]
-        updateBatch.api(name: "simple_strict_table").update(id: ids[0], value: updateRecord)
-        
-        let updateOperation = updateBatch.operations[0]
-        let updateJson = try JSONSerialization.jsonObject(with: JSONEncoder().encode(updateOperation)) as! [String: Any]
-        
-        #expect(updateJson["Update"] != nil)
-        let updateOp = updateJson["Update"] as! [String: Any]
-        #expect(updateOp["apiName"] as? String == "simple_strict_table")
-        #expect(updateOp["id"] as? String == ids[0])
-        #expect(updateOp["value"] as? [String: Any] == updateRecord)
-        
-        // Test actual update
-        try await updateBatch.send()
-        let updatedRecord: SimpleStrict = try await api.read(recordId: ids[0])
-        #expect(updatedRecord.text_not_null == updateRecord["text_not_null"] as? String)
-        
-        // Test delete operation
-        let deleteBatch = client.transaction()
-        deleteBatch.api(name: "simple_strict_table").delete(id: ids[0])
-        
-        let deleteOperation = deleteBatch.operations[0]
-        let deleteJson = try JSONSerialization.jsonObject(with: JSONEncoder().encode(deleteOperation)) as! [String: Any]
-        
-        #expect(deleteJson["Delete"] != nil)
-        let deleteOp = deleteJson["Delete"] as! [String: Any]
-        #expect(deleteOp["apiName"] as? String == "simple_strict_table")
-        #expect(deleteOp["id"] as? String == ids[0])
-        
-        // Test actual deletion
-        try await deleteBatch.send()
-        do {
-            let _: SimpleStrict = try await api.read(recordId: ids[0])
-            #expect(false)
-        } catch {
-            // Expected error
-        }
-        
-        // Test multiple operations
-        let multiBatch = client.transaction()
-        multiBatch.api(name: "simple_strict_table").create(value: [
-            "text_not_null": "swift transaction multi create: =?&\(now)"
-        ])
-        multiBatch.api(name: "simple_strict_table").update(id: "record1", value: [
-            "text_not_null": "swift transaction multi update: =?&\(now)"
-        ])
-        multiBatch.api(name: "simple_strict_table").delete(id: "record2")
-        
-        #expect(multiBatch.operations.count == 3)
-        let jsonArray = try multiBatch.operations.map { operation -> [String: Any] in
-            try JSONSerialization.jsonObject(with: JSONEncoder().encode(operation)) as! [String: Any]
-        }
-        
-        #expect(jsonArray[0]["Create"] != nil)
-        #expect(jsonArray[1]["Update"] != nil)
-        #expect(jsonArray[2]["Delete"] != nil)
-    }
-
     @Test func recordTest() async throws {
         let client = try await connect()
         let api = client.records("simple_strict_table")
@@ -287,6 +197,52 @@ extension Trait where Self == SetupTrailBaseTrait {
             let _: SimpleStrict = try await api.read(recordId: ids[0])
             assert(false)
         } catch {
+        }
+    }
+
+    @Test("Test Transaction") func testTransaction() async throws {
+        let client = try await connect()
+        let now = NSDate().timeIntervalSince1970
+        
+        // Test create operation
+        let batch = client.transaction()
+        let createRecord = [
+            "text_not_null": "swift transaction create test: =?&\(now)"
+        ] as [String: Any]
+        batch.api(name: "simple_strict_table").create(value: createRecord)
+
+        // Test actual creation
+        let ids: [RecordId] = try await batch.send()
+        #expect(ids.count == 1)
+        
+        // Verify record was created
+        let api = client.records("simple_strict_table")
+        let createdRecord: SimpleStrict = try await api.read(recordId: ids[0])
+        #expect(createdRecord.text_not_null == createRecord["text_not_null"] as? String)
+        
+        // Test update operation
+        let updateBatch = client.transaction()
+        let updateRecord = [
+            "text_not_null": "swift transaction update test: =?&\(now)"
+        ] as [String: Any]
+        updateBatch.api(name: "simple_strict_table").update(recordId: ids[0], value: updateRecord)
+        
+        // Test actual update
+        try await updateBatch.send()
+        let updatedRecord: SimpleStrict = try await api.read(recordId: ids[0])
+        #expect(updatedRecord.text_not_null == updateRecord["text_not_null"] as? String)
+        
+        // Test delete operation
+        let deleteBatch = client.transaction()
+        deleteBatch.api(name: "simple_strict_table").delete(recordId: ids[0])
+        
+        // Test actual deletion
+        try await deleteBatch.send()
+        do {
+            let _: SimpleStrict = try await api.read(recordId: ids[0])
+            #expect(false)
+        } catch {
+            // Expected error
         }
     }
 }

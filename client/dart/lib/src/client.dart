@@ -12,14 +12,11 @@ class User {
   final String id;
   final String email;
 
-  const User({
-    required this.id,
-    required this.email,
-  });
+  const User({required this.id, required this.email});
 
   User.fromJson(Map<String, dynamic> json)
-      : id = json['sub'],
-        email = json['email'];
+    : id = json['sub'],
+      email = json['email'];
 
   @override
   String toString() => 'User(id=${id}, email=${email})';
@@ -33,15 +30,15 @@ class Tokens {
   const Tokens(this.auth, this.refresh, this.csrf);
 
   Tokens.fromJson(Map<String, dynamic> json)
-      : auth = json['auth_token'],
-        refresh = json['refresh_token'],
-        csrf = json['csrf_token'];
+    : auth = json['auth_token'],
+      refresh = json['refresh_token'],
+      csrf = json['csrf_token'];
 
   Map<String, dynamic> toJson() => {
-        'auth_token': auth,
-        'refresh_token': refresh,
-        'csrf_token': csrf,
-      };
+    'auth_token': auth,
+    'refresh_token': refresh,
+    'csrf_token': csrf,
+  };
 
   bool get valid => JwtDecoder.decode(auth).isNotEmpty;
 
@@ -76,11 +73,11 @@ class JwtToken {
   });
 
   JwtToken.fromJson(Map<String, dynamic> json)
-      : sub = json['sub'],
-        iat = json['iat'],
-        exp = json['exp'],
-        email = json['email'],
-        csrfToken = json['csrf_token'];
+    : sub = json['sub'],
+      iat = json['iat'],
+      exp = json['exp'],
+      email = json['email'],
+      csrfToken = json['csrf_token'];
 }
 
 class _TokenState {
@@ -104,11 +101,7 @@ class Pagination {
   final int? limit;
   final int? offset;
 
-  const Pagination({
-    this.cursor,
-    this.limit,
-    this.offset,
-  });
+  const Pagination({this.cursor, this.limit, this.offset});
 }
 
 class ListResponse {
@@ -116,16 +109,12 @@ class ListResponse {
   final List<Map<String, dynamic>> records;
   final int? totalCount;
 
-  const ListResponse({
-    this.cursor,
-    required this.records,
-    this.totalCount,
-  });
+  const ListResponse({this.cursor, required this.records, this.totalCount});
 
   ListResponse.fromJson(Map<String, dynamic> json)
-      : cursor = json['cursor'],
-        records = (json['records'] as List).cast<Map<String, dynamic>>(),
-        totalCount = json['total_count'];
+    : cursor = json['cursor'],
+      records = (json['records'] as List).cast<Map<String, dynamic>>(),
+      totalCount = json['total_count'];
 }
 
 abstract class RecordId {
@@ -142,7 +131,7 @@ class _ResponseRecordIds {
   const _ResponseRecordIds(this._ids);
 
   _ResponseRecordIds.fromJson(Map<String, dynamic> json)
-      : _ids = (json['ids'] as List).cast<String>();
+    : _ids = (json['ids'] as List).cast<String>();
 
   List<RecordId> toRecordIds() {
     return _ids.map(toRecordId).toList();
@@ -316,11 +305,7 @@ class Filter extends FilterBase {
   final CompareOp? op;
   final String value;
 
-  const Filter({
-    required this.column,
-    required this.value,
-    this.op,
-  });
+  const Filter({required this.column, required this.value, this.op});
 }
 
 class And extends FilterBase {
@@ -369,22 +354,22 @@ class RecordApi {
     void traverseFilters(String path, FilterBase filter) {
       final _ = switch (filter) {
         Filter(column: final c, op: final op, value: final v) => () {
-            if (op != null) {
-              params['${path}[${c}][${_opToSring(op)}]'] = v;
-            } else {
-              params['${path}[${c}]'] = v;
-            }
-          }(),
+          if (op != null) {
+            params['${path}[${c}][${_opToSring(op)}]'] = v;
+          } else {
+            params['${path}[${c}]'] = v;
+          }
+        }(),
         And(filters: final filters) => () {
-            filters.asMap().forEach((index, filter) {
-              traverseFilters('${path}[\$and][${index}]', filter);
-            });
-          }(),
+          filters.asMap().forEach((index, filter) {
+            traverseFilters('${path}[\$and][${index}]', filter);
+          });
+        }(),
         Or(filters: final filters) => () {
-            filters.asMap().forEach((index, filter) {
-              traverseFilters('${path}[\$or][${index}]', filter);
-            });
-          }(),
+          filters.asMap().forEach((index, filter) {
+            traverseFilters('${path}[\$or][${index}]', filter);
+          });
+        }(),
       };
     }
 
@@ -401,9 +386,11 @@ class RecordApi {
   }
 
   Future<Map<String, dynamic>> read(RecordId id, {List<String>? expand}) async {
-    final response = await _client.fetch(expand == null
-        ? '${RecordApi._recordApi}/${_name}/${id}'
-        : '${RecordApi._recordApi}/${_name}/${id}?expand=${expand.join(",")}');
+    final response = await _client.fetch(
+      expand == null
+          ? '${RecordApi._recordApi}/${_name}/${id}'
+          : '${RecordApi._recordApi}/${_name}/${id}?expand=${expand.join(",")}',
+    );
     return response.data;
   }
 
@@ -436,10 +423,7 @@ class RecordApi {
     return responseIds.toRecordIds();
   }
 
-  Future<void> update(
-    RecordId id,
-    Map<String, dynamic> record,
-  ) async {
+  Future<void> update(RecordId id, Map<String, dynamic> record) async {
     await _client.fetch(
       '${RecordApi._recordApi}/${_name}/${id}',
       method: 'PATCH',
@@ -487,10 +471,12 @@ class RecordApi {
   Uri imageUri(RecordId id, String colName, {int? index}) {
     if (index != null) {
       return Uri.parse(
-          '${_client.site()}/${RecordApi._recordApi}/${_name}/${id}/file/${colName}/${index}');
+        '${_client.site()}/${RecordApi._recordApi}/${_name}/${id}/file/${colName}/${index}',
+      );
     }
     return Uri.parse(
-        '${_client.site()}/${RecordApi._recordApi}/${_name}/${id}/file/${colName}');
+      '${_client.site()}/${RecordApi._recordApi}/${_name}/${id}/file/${colName}',
+    );
   }
 }
 
@@ -541,23 +527,26 @@ class Client {
     String site, {
     Tokens? tokens,
     void Function(Client, Tokens?)? onAuthChange,
-  })  : _client = _ThinClient(site),
-        _site = site,
-        _tokenState = _TokenState.build(tokens),
-        _authChange = onAuthChange;
+  }) : _client = _ThinClient(site),
+       _site = site,
+       _tokenState = _TokenState.build(tokens),
+       _authChange = onAuthChange;
 
-  Client(
-    String site, {
+  Client(String site, {void Function(Client, Tokens?)? onAuthChange})
+    : this._(site, onAuthChange: onAuthChange);
+
+  static Future<Client> withTokens(
+    String site,
+    Tokens tokens, {
     void Function(Client, Tokens?)? onAuthChange,
-  }) : this._(site, onAuthChange: onAuthChange);
-
-  static Future<Client> withTokens(String site, Tokens tokens,
-      {void Function(Client, Tokens?)? onAuthChange}) async {
+  }) async {
     final client = Client(site, onAuthChange: onAuthChange);
 
     try {
-      final statusResponse = await client._client
-          .fetch('${_authApi}/status', _TokenState.build(tokens));
+      final statusResponse = await client._client.fetch(
+        '${_authApi}/status',
+        _TokenState.build(tokens),
+      );
       final Map<String, dynamic> response = statusResponse.data;
 
       final newTokens = Tokens(
@@ -611,10 +600,7 @@ class Client {
     final response = await fetch(
       '${_authApi}/login',
       method: 'POST',
-      data: {
-        'email': email,
-        'password': password,
-      },
+      data: {'email': email, 'password': password},
     );
 
     final Map<String, dynamic> json = response.data;
@@ -656,9 +642,11 @@ class Client {
     final refreshToken = _tokenState.state?.$1.refresh;
     try {
       if (refreshToken != null) {
-        await fetch('${_authApi}/logout', method: 'POST', data: {
-          'refresh_token': refreshToken,
-        });
+        await fetch(
+          '${_authApi}/logout',
+          method: 'POST',
+          data: {'refresh_token': refreshToken},
+        );
       } else {
         await fetch('${_authApi}/logout');
       }
@@ -678,9 +666,7 @@ class Client {
     await fetch(
       '${Client._authApi}/change_email',
       method: 'POST',
-      data: {
-        'new_email': email,
-      },
+      data: {'new_email': email},
     );
   }
 
@@ -696,17 +682,17 @@ class Client {
       '${_authApi}/refresh',
       _tokenState,
       method: 'POST',
-      data: {
-        'refresh_token': refreshToken,
-      },
+      data: {'refresh_token': refreshToken},
     );
 
     final Map<String, dynamic> tokenResponse = await response.data;
-    return _TokenState.build(Tokens(
-      tokenResponse['auth_token']!,
-      refreshToken,
-      tokenResponse['csrf_token'],
-    ));
+    return _TokenState.build(
+      Tokens(
+        tokenResponse['auth_token']!,
+        refreshToken,
+        tokenResponse['csrf_token'],
+      ),
+    );
   }
 
   static String? _shouldRefresh(_TokenState tokenState) {
@@ -744,7 +730,8 @@ class Client {
     if (response.statusCode != 200 && (throwOnError ?? true)) {
       final errMsg = await response.data;
       throw Exception(
-          '[${response.statusCode}] ${response.statusMessage}}: ${errMsg}');
+        '[${response.statusCode}] ${response.statusMessage}}: ${errMsg}',
+      );
     }
 
     return response;
@@ -752,9 +739,7 @@ class Client {
 }
 
 Map<String, dynamic> buildHeaders(Tokens? tokens) {
-  final Map<String, dynamic> base = {
-    'Content-Type': 'application/json',
-  };
+  final Map<String, dynamic> base = {'Content-Type': 'application/json'};
 
   if (tokens != null) {
     base['Authorization'] = 'Bearer ${tokens.auth}';

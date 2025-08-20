@@ -315,7 +315,8 @@ func TestTransaction(t *testing.T) {
 		batch.API("simple_strict_table").Delete(ids[0])
 		_, err := batch.Send()
 		assertFine(t, err)
-		_, err = api.Read(ids[0])
-		assert(t, err != nil, "Expected error reading deleted record")
+		r, err := api.Read(ids[0])
+		assert(t, err != nil, "expected error reading delete record")
+		assert(t, r == nil, "expected nil value reading delete record")
 	}
 }

@@ -6,7 +6,9 @@ import 'package:dio/dio.dart' as dio;
 class SeeInterceptor extends dio.Interceptor {
   @override
   void onResponse(
-      dio.Response response, dio.ResponseInterceptorHandler handler) {
+    dio.Response response,
+    dio.ResponseInterceptorHandler handler,
+  ) {
     if (response.requestOptions.responseType == dio.ResponseType.stream) {
       final Stream<Uint8List> stream = response.data.stream;
 
@@ -29,12 +31,17 @@ class SeeInterceptor extends dio.Interceptor {
         ),
       );
 
-      return handler.resolve(dio.Response(
-        requestOptions: response.requestOptions,
-        data: dio.ResponseBody(transformedStream, response.data.contentLength),
-        statusCode: response.statusCode,
-        headers: response.headers,
-      ));
+      return handler.resolve(
+        dio.Response(
+          requestOptions: response.requestOptions,
+          data: dio.ResponseBody(
+            transformedStream,
+            response.data.contentLength,
+          ),
+          statusCode: response.statusCode,
+          headers: response.headers,
+        ),
+      );
     }
 
     handler.next(response);

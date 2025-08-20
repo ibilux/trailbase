@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:dio/dio.dart' as dio;
 import 'package:trailbase/src/client.dart';
 
-
 class Operation {
   CreateOperation? create;
   UpdateOperation? update;
@@ -45,7 +44,11 @@ class UpdateOperation {
   RecordId recordId;
   Map<String, dynamic> value;
 
-  UpdateOperation({required this.apiName, required this.recordId, required this.value});
+  UpdateOperation({
+    required this.apiName,
+    required this.recordId,
+    required this.value,
+  });
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {};
@@ -88,9 +91,7 @@ class TransactionResponse {
   TransactionResponse({required this.ids});
 
   factory TransactionResponse.fromJson(Map<String, dynamic> json) {
-    return TransactionResponse(
-      ids: (json['ids'] as List).cast<String>(),
-    );
+    return TransactionResponse(ids: (json['ids'] as List).cast<String>());
   }
 }
 
@@ -146,35 +147,31 @@ class ApiBatch implements IApiBatch {
 
   @override
   ITransactionBatch create(Map<String, dynamic> value) {
-    _batch.addOperation(Operation(
-      create: CreateOperation(
-        apiName: _apiName,
-        value: value,
-      ),
-    ));
+    _batch.addOperation(
+      Operation(create: CreateOperation(apiName: _apiName, value: value)),
+    );
     return _batch;
   }
 
   @override
   ITransactionBatch update(RecordId recordId, Map<String, dynamic> value) {
-    _batch.addOperation(Operation(
-      update: UpdateOperation(
-        apiName: _apiName,
-        recordId: recordId,
-        value: value,
+    _batch.addOperation(
+      Operation(
+        update: UpdateOperation(
+          apiName: _apiName,
+          recordId: recordId,
+          value: value,
+        ),
       ),
-    ));
+    );
     return _batch;
   }
 
   @override
   ITransactionBatch delete(RecordId recordId) {
-    _batch.addOperation(Operation(
-      delete: DeleteOperation(
-        apiName: _apiName,
-        recordId: recordId,
-      ),
-    ));
+    _batch.addOperation(
+      Operation(delete: DeleteOperation(apiName: _apiName, recordId: recordId)),
+    );
     return _batch;
   }
 }
