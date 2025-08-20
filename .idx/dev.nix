@@ -25,6 +25,12 @@
     pkgs.openssl.dev
     pkgs.sqlite.dev
     pkgs.libclang
+
+    #
+    pkgs.python313
+    pkgs.dart
+    pkgs.go
+    pkgs.dotnet-sdk_9
   ];
 
   # Sets environment variables in the workspace

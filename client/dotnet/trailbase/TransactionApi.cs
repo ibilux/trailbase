@@ -134,8 +134,8 @@ namespace TrailBase.Client
     public interface IApiBatch
     {
         ITransactionBatch Create(Dictionary<string, object> record);
-        ITransactionBatch Update(string recordId, Dictionary<string, object> record);
-        ITransactionBatch Delete(string recordId);
+        ITransactionBatch Update(RecordId recordId, Dictionary<string, object> record);
+        ITransactionBatch Delete(RecordId recordId);
     }
 
     public class TransactionBatch : ITransactionBatch
@@ -192,15 +192,15 @@ namespace TrailBase.Client
             return _batch;
         }
 
-        public ITransactionBatch Update(string recordId, Dictionary<string, object> value)
+        public ITransactionBatch Update(RecordId recordId, Dictionary<string, object> value)
         {
-            _batch.AddOperation(Operation.Update(_apiName, recordId, value));
+            _batch.AddOperation(Operation.Update(_apiName, recordId.ToString(), value));
             return _batch;
         }
 
-        public ITransactionBatch Delete(string recordId)
+        public ITransactionBatch Delete(RecordId recordId)
         {
-            _batch.AddOperation(Operation.Delete(_apiName, recordId));
+            _batch.AddOperation(Operation.Delete(_apiName, recordId.ToString()));
             return _batch;
         }
     }

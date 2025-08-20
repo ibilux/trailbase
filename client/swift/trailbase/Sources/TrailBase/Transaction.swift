@@ -1,10 +1,9 @@
-swift
 import Foundation
 
 public enum Operation: Codable {
     case create(apiName: String, value: [String: AnyCodable])
-    case update(apiName: String, recordId: String, value: [String: AnyCodable])
-    case delete(apiName: String, recordId: String)
+    case update(apiName: String, recordId: RecordId, value: [String: AnyCodable])
+    case delete(apiName: String, recordId: RecordId)
 
     private enum CodingKeys: String, CodingKey {
         case create = "Create"
@@ -27,13 +26,13 @@ public enum Operation: Codable {
         case let .update(apiName, recordId, value):
             var updateContainer = container.nestedContainer(keyedBy: CodingKeys.self, forKey: .update)
             try updateContainer.encode(apiName, forKey: .apiName)
-            try updateContainer.encode(recordId, forKey: .recordId)
+            try updateContainer.encode(recordId.id, forKey: .recordId)
             try updateContainer.encode(value, forKey: .value)
 
         case let .delete(apiName, recordId):
             var deleteContainer = container.nestedContainer(keyedBy: CodingKeys.self, forKey: .delete)
             try deleteContainer.encode(apiName, forKey: .apiName)
-            try deleteContainer.encode(recordId, forKey: .recordId)
+            try deleteContainer.encode(recordId.id, forKey: .recordId)
         }
     }
 
@@ -47,9 +46,9 @@ public enum Operation: Codable {
 
         } else if let updateContainer = try? container.nestedContainer(keyedBy: CodingKeys.self, forKey: .update) {
             let apiName = try updateContainer.decode(String.self, forKey: .apiName)
-            let recordId = try updateContainer.decode(String.self, forKey: .recordId)
+            let recordIdString = try updateContainer.decode(String.self, forKey: .recordId)
             let value = try updateContainer.decode([String: AnyCodable].self, forKey: .value)
-            self = .update(apiName: apiName, recordId: recordId, value: value)
+            self = .update(apiName: apiName, recordId: RecordId(id: recordIdString), value: value)
 
         } else if let deleteContainer = try? container.nestedContainer(keyedBy: CodingKeys.self, forKey: .delete) {
             let apiName = try deleteContainer.decode(String.self, forKey: .apiName)
@@ -126,12 +125,12 @@ public class ApiBatch {
         return batch
     }
 
-    public func update(recordId: String, value: [String: AnyCodable]) -> TransactionBatch {
+    public func update(recordId: RecordId, value: [String: AnyCodable]) -> TransactionBatch {
         batch.addOperation(.update(apiName: apiName, recordId: recordId, value: value))
         return batch
     }
 
-    public func delete(recordId: String) -> TransactionBatch {
+    public func delete(recordId: RecordId) -> TransactionBatch {
         batch.addOperation(.delete(apiName: apiName, recordId: recordId))
         return batch
     }

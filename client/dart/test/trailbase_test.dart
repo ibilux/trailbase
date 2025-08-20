@@ -447,112 +447,39 @@ Future<void> main() async {
           ));
     });
 
-    test('transaction create operation', () async {
+    test('transaction', () async {
       final client = await connect();
-      final batch = client.transaction();
       final api = client.records('simple_strict_table');
 
-      final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final record = {'text_not_null': 'dart transaction test create: ${now}'};
-      batch.api('simple_strict_table').create(record);
+      final ids = [];
 
-      final operation = batch._operations[0];
-      final json = operation.toJson();
+      {
+        final batch = client.transaction();
+        final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        final message = 'dart transaction test create: ${now}';
+        batch.api('simple_strict_table').create({'text_not_null': message});
+        final record = SimpleStrict.fromJson(await api.read(ids[0]));
+        ids = await batch.send();
+        expect(ids.length, equals(1));
+        expect(record.textNotNull, message);
+      }
 
-      expect(json.containsKey('Create'), isTrue);
-      expect(json['Create']['apiName'], equals('simple_strict_table'));
-      expect(json['Create']['value'], equals(record));
+      {
+        final batch = client.transaction();
+        final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        final message = 'dart transaction test update: ${now}';
+        batch.api('simple_strict_table').update(ids[0], {'text_not_null': message});
+        final record = SimpleStrict.fromJson(await api.read(ids[0]));
+        await batch.send();
+        expect(record.textNotNull, message);
+      }
 
-      // Test actual creation
-      final ids = await batch.send();
-      expect(ids.length, equals(1));
-
-      final createdRecord = await api.read(ids[0]);
-      expect(createdRecord['text_not_null'], equals(record['text_not_null']));
-    });
-
-    test('transaction update operation', () async {
-      final client = await connect();
-      final batch = client.transaction();
-      final api = client.records('simple_strict_table');
-
-      // First create a record to update
-      final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final createRecord = {'text_not_null': 'dart transaction test update original: ${now}'};
-      final id = await api.create(createRecord);
-
-      // Prepare update operation
-      final updateRecord = {'text_not_null': 'dart transaction test update modified: ${now}'};
-      batch.api('simple_strict_table').update(id, updateRecord);
-
-      final operation = batch._operations[0];
-      final json = operation.toJson();
-
-      expect(json.containsKey('Update'), isTrue);
-      expect(json['Update']['apiName'], equals('simple_strict_table'));
-      expect(json['Update']['id'], equals(id));
-      expect(json['Update']['value'], equals(updateRecord));
-
-      // Test actual update
-      await batch.send();
-      final updatedRecord = await api.read(id);
-      expect(updatedRecord['text_not_null'], equals(updateRecord['text_not_null']));
-    });
-
-    test('transaction delete operation', () async {
-      final client = await connect();
-      final batch = client.transaction();
-      final api = client.records('simple_strict_table');
-
-      // First create a record to delete
-      final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final createRecord = {'text_not_null': 'dart transaction test delete: ${now}'};
-      final id = await api.create(createRecord);
-
-      batch.api('simple_strict_table').delete(id);
-
-      final operation = batch._operations[0];
-      final json = operation.toJson();
-
-      expect(json.containsKey('Delete'), isTrue);
-      expect(json['Delete']['apiName'], equals('simple_strict_table'));
-      expect(json['Delete']['id'], equals(id));
-
-      // Test actual deletion
-      await batch.send();
-      expect(() async => await api.read(id), throwsException);
-    });
-
-    test('transaction multiple operations', () async {
-      final client = await connect();
-      final batch = client.transaction();
-      final api = client.records('simple_strict_table');
-
-      final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      
-      // Create operation
-      final createRecord = {'text_not_null': 'dart transaction test multi create: ${now}'};
-      batch.api('simple_strict_table').create(createRecord);
-      
-      // Update operation (will be executed after create)
-      batch.api('simple_strict_table').update('record1', {'text_not_null': 'dart transaction test multi update: ${now}'});
-      
-      // Delete operation
-      batch.api('simple_strict_table').delete('record2');
-
-      // Verify operation order
-      expect(batch._operations.length, equals(3));
-      expect(batch._operations[0].toJson().containsKey('Create'), isTrue);
-      expect(batch._operations[1].toJson().containsKey('Update'), isTrue);
-      expect(batch._operations[2].toJson().containsKey('Delete'), isTrue);
-
-      // Test execution order with real operations
-      final ids = await batch.send();
-      expect(ids.length, equals(1)); // Only create operation returns an ID
-
-      // Verify the record was created
-      final createdRecord = await api.read(ids[0]);
-      expect(createdRecord['text_not_null'], equals(createRecord['text_not_null']));
+      {
+        final batch = client.transaction();
+        await batch.api('simple_strict_table').delete(ids[0]);
+        await batch.send();
+        expect(() async => await api.read(ids[0]), throwsException);
+      }
     });
   });
 }

@@ -852,22 +852,22 @@ export class ApiBatch {
     return this.batch;
   }
 
-  update(recordId: string, value: Record<string, unknown>): TransactionBatch {
+  update(recordId: string | number, value: Record<string, unknown>): TransactionBatch {
     this.batch.addOperation({
       Update: {
         api_name: this.apiName,
-        record_id: recordId,
+        record_id: `${recordId}`,
         value: value,
       },
     });
     return this.batch;
   }
 
-  delete(recordId: string): TransactionBatch {
+  delete(recordId: string | number): TransactionBatch {
     this.batch.addOperation({
       Delete: {
         api_name: this.apiName,
-        record_id: recordId,
+        record_id: `${recordId}`,
       },
     });
     return this.batch;

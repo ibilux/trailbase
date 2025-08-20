@@ -42,7 +42,7 @@ class CreateOperation {
 
 class UpdateOperation {
   String apiName;
-  String recordId;
+  RecordId recordId;
   Map<String, dynamic> value;
 
   UpdateOperation({required this.apiName, required this.recordId, required this.value});
@@ -58,7 +58,7 @@ class UpdateOperation {
 
 class DeleteOperation {
   String apiName;
-  String recordId;
+  RecordId recordId;
 
   DeleteOperation({required this.apiName, required this.recordId});
 
@@ -101,8 +101,8 @@ abstract class ITransactionBatch {
 
 abstract class IApiBatch {
   ITransactionBatch create(Map<String, dynamic> value);
-  ITransactionBatch update(String recordId, Map<String, dynamic> value);
-  ITransactionBatch delete(String recordId);
+  ITransactionBatch update(RecordId recordId, Map<String, dynamic> value);
+  ITransactionBatch delete(RecordId recordId);
 }
 
 class TransactionBatch implements ITransactionBatch {
@@ -156,7 +156,7 @@ class ApiBatch implements IApiBatch {
   }
 
   @override
-  ITransactionBatch update(String recordId, Map<String, dynamic> value) {
+  ITransactionBatch update(RecordId recordId, Map<String, dynamic> value) {
     _batch.addOperation(Operation(
       update: UpdateOperation(
         apiName: _apiName,
@@ -168,7 +168,7 @@ class ApiBatch implements IApiBatch {
   }
 
   @override
-  ITransactionBatch delete(String recordId) {
+  ITransactionBatch delete(RecordId recordId) {
     _batch.addOperation(Operation(
       delete: DeleteOperation(
         apiName: _apiName,

@@ -7,22 +7,22 @@ import (
 )
 
 type Operation struct {
-	Type     string                 `json:"-"`
-	ApiName  string                 `json:"api_name"`
-	RecordID string                 `json:"record_id,omitempty"`
-	Value    map[string]interface{} `json:"value,omitempty"`
+	Type     string      `json:"-"`
+	ApiName  string      `json:"api_name"`
+	RecordID string      `json:"record_id,omitempty"`
+	Value    interface{} `json:"value,omitempty"`
 }
 
 func (o Operation) MarshalJSON() ([]byte, error) {
 	var wrapper struct {
 		Create *struct {
-			ApiName string                 `json:"api_name"`
-			Value   map[string]interface{} `json:"value"`
+			ApiName string      `json:"api_name"`
+			Value   interface{} `json:"value"`
 		} `json:"Create,omitempty"`
 		Update *struct {
-			ApiName  string                 `json:"api_name"`
-			RecordID string                 `json:"record_id"`
-			Value    map[string]interface{} `json:"value"`
+			ApiName  string      `json:"api_name"`
+			RecordID string      `json:"record_id"`
+			Value    interface{} `json:"value"`
 		} `json:"Update,omitempty"`
 		Delete *struct {
 			ApiName  string `json:"api_name"`
@@ -33,17 +33,17 @@ func (o Operation) MarshalJSON() ([]byte, error) {
 	switch o.Type {
 	case "Create":
 		wrapper.Create = &struct {
-			ApiName string                 `json:"api_name"`
-			Value   map[string]interface{} `json:"value"`
+			ApiName string      `json:"api_name"`
+			Value   interface{} `json:"value"`
 		}{
 			ApiName: o.ApiName,
 			Value:   o.Value,
 		}
 	case "Update":
 		wrapper.Update = &struct {
-			ApiName  string                 `json:"api_name"`
-			RecordID string                 `json:"record_id"`
-			Value    map[string]interface{} `json:"value"`
+			ApiName  string      `json:"api_name"`
+			RecordID string      `json:"record_id"`
+			Value    interface{} `json:"value"`
 		}{
 			ApiName:  o.ApiName,
 			RecordID: o.RecordID,
@@ -67,7 +67,7 @@ type TransactionRequest struct {
 }
 
 type TransactionResponse struct {
-	IDs []string `json:"ids"`
+	Ids []string `json:"ids"`
 }
 
 type TransactionBatch struct {
@@ -87,7 +87,7 @@ func (tb *TransactionBatch) API(apiName string) *ApiBatch {
 	}
 }
 
-func (tb *TransactionBatch) Send() ([]string, error) {
+func (tb *TransactionBatch) Send() ([]RecordId, error) {
 	reqBody := TransactionRequest{
 		Operations: tb.operations,
 	}
@@ -114,18 +114,24 @@ func (tb *TransactionBatch) Send() ([]string, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if response.IDs == nil {
-		response.IDs = []string{} // Ensure non-nil slice
+	if response.Ids == nil {
+		response.Ids = []string{} // Ensure non-nil slice
 	}
 
-	return response.IDs, nil
+	// Convert string IDs to RecordId
+	recordIDs := make([]RecordId, len(response.Ids))
+	for i, idStr := range response.Ids {
+		recordIDs[i] = StringRecordId(idStr)
+	}
+
+	return recordIDs, nil
 }
 
 func (tb *TransactionBatch) addOperation(op Operation) {
 	tb.operations = append(tb.operations, op)
 }
 
-func (ab *ApiBatch) Create(value map[string]interface{}) *TransactionBatch {
+func (ab *ApiBatch) Create(value interface{}) *TransactionBatch {
 	ab.batch.addOperation(Operation{
 		Type:    "Create",
 		ApiName: ab.apiName,
@@ -134,21 +140,21 @@ func (ab *ApiBatch) Create(value map[string]interface{}) *TransactionBatch {
 	return ab.batch
 }
 
-func (ab *ApiBatch) Update(recordID string, value map[string]interface{}) *TransactionBatch {
+func (ab *ApiBatch) Update(recordID RecordId, value interface{}) *TransactionBatch {
 	ab.batch.addOperation(Operation{
 		Type:     "Update",
 		ApiName:  ab.apiName,
-		RecordID: recordID,
+		RecordID: recordID.ToString(),
 		Value:    value,
 	})
 	return ab.batch
 }
 
-func (ab *ApiBatch) Delete(recordID string) *TransactionBatch {
+func (ab *ApiBatch) Delete(recordID RecordId) *TransactionBatch {
 	ab.batch.addOperation(Operation{
 		Type:     "Delete",
 		ApiName:  ab.apiName,
-		RecordID: recordID,
+		RecordID: recordID.ToString(),
 	})
 	return ab.batch
 }

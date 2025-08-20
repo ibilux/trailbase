@@ -15,7 +15,6 @@ use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::*;
@@ -778,21 +777,21 @@ impl<'a> ApiBatch<'a> {
 
   pub fn update(
     self,
-    record_id: impl Into<String>,
+    record_id: impl RecordId<'a>,
     value: impl Into<serde_json::Value>,
   ) -> &'a mut TransactionBatch {
     self.batch.add_operation(Operation::Update {
       api_name: self.api_name,
-      record_id: record_id.into(),
+      record_id: record_id.serialized_id().to_string(),
       value: value.into(),
     });
     self.batch
   }
 
-  pub fn delete(self, record_id: impl Into<String>) -> &'a mut TransactionBatch {
+  pub fn delete(self, record_id: impl RecordId<'a>) -> &'a mut TransactionBatch {
     self.batch.add_operation(Operation::Delete {
       api_name: self.api_name,
-      record_id: record_id.into(),
+      record_id: record_id.serialized_id().to_string(),
     });
     self.batch
   }

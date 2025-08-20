@@ -1,7 +1,6 @@
 package trailbase
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -276,196 +275,47 @@ func assert(t *testing.T, condition bool, msg string) {
 	}
 }
 
-func TestTransactionCreateOperation(t *testing.T) {
+func TestTransaction(t *testing.T) {
 	client := connect(t)
 	batch := client.Transaction()
 	api := NewRecordApi[SimpleStrict](client, "simple_strict_table")
 
 	now := time.Now().Unix()
-	record := SimpleStrict{
-		TextNotNull: fmt.Sprint("go transaction create test: =?&", now),
-	}
 
-	recordMap := map[string]interface{}{
-		"text_not_null": record.TextNotNull,
-	}
-	batch.API("simple_strict_table").Create(recordMap)
+	var ids []RecordId
+	// Create
 
-	operation := batch.operations[0]
-	jsonBytes, err := json.Marshal(operation)
-	assertFine(t, err)
-
-	var jsonMap map[string]interface{}
-	err = json.Unmarshal(jsonBytes, &jsonMap)
-	assertFine(t, err)
-
-	createOp, ok := jsonMap["Create"].(map[string]interface{})
-	assert(t, ok, "Expected Create operation")
-	assertEqual(t, "simple_strict_table", createOp["apiName"])
-	textNotNull, ok := createOp["value"].(map[string]interface{})["text_not_null"].(string)
-	assert(t, ok, "Expected text_not_null to be a string")
-	assertEqual(t, record.TextNotNull, textNotNull)
-
-	// Test actual creation
+	createdMessage := fmt.Sprint("go transaction create test: =?&", now)
+	batch.API("simple_strict_table").Create(SimpleStrict{
+		TextNotNull: createdMessage,
+	})
 	ids, err := batch.Send()
 	assertFine(t, err)
 	assert(t, len(ids) == 1, "Expected one ID from create operation")
 
-	// Verify the record was created
-	createdRecord, err := api.Read(StringRecordId(ids[0]))
+	simpleStrict1, err := api.Read(ids[0])
 	assertFine(t, err)
-	assertEqual(t, record.TextNotNull, createdRecord.TextNotNull)
-}
+	assertEqual(t, createdMessage, simpleStrict1.TextNotNull)
 
-func TestTransactionUpdateOperation(t *testing.T) {
-	client := connect(t)
-	batch := client.Transaction()
-	api := NewRecordApi[SimpleStrict](client, "simple_strict_table")
+	// Update
+	{
+		updatedMessage := fmt.Sprint("go transaction update test: =?&", now)
+		batch.API("simple_strict_table").Update(ids[0], SimpleStrict{
+			TextNotNull: updatedMessage,
+		})
+		_, err := batch.Send()
+		assertFine(t, err)
 
-	// First create a record to update
-	now := time.Now().Unix()
-	createRecord := SimpleStrict{
-		TextNotNull: fmt.Sprint("go transaction update test original: =?&", now),
+		simpleStrict2, err := api.Read(ids[0])
+		assertFine(t, err)
+		assertEqual(t, updatedMessage, simpleStrict2.TextNotNull)
 	}
-	id, err := api.Create(createRecord)
-	assertFine(t, err)
-
-	// Update operation
-	updateRecord := SimpleStrict{
-		TextNotNull: fmt.Sprint("go transaction update test modified: =?&", now),
+	// Delete
+	{
+		batch.API("simple_strict_table").Delete(ids[0])
+		_, err := batch.Send()
+		assertFine(t, err)
+		_, err = api.Read(ids[0])
+		assert(t, err != nil, "Expected error reading deleted record")
 	}
-	updateMap := map[string]interface{}{
-		"text_not_null": updateRecord.TextNotNull,
-	}
-	batch.API("simple_strict_table").Update(id.ToString(), updateMap)
-
-	operation := batch.operations[0]
-	jsonBytes, err := json.Marshal(operation)
-	assertFine(t, err)
-
-	var jsonMap map[string]interface{}
-	err = json.Unmarshal(jsonBytes, &jsonMap)
-	assertFine(t, err)
-
-	updateOp, ok := jsonMap["Update"].(map[string]interface{})
-	assert(t, ok, "Expected Update operation")
-	assertEqual(t, "simple_strict_table", updateOp["apiName"])
-	assert(t, updateOp["id"] != nil, "Expected id in update operation")
-	textNotNull, ok := updateOp["value"].(map[string]interface{})["text_not_null"].(string)
-	assert(t, ok, "Expected text_not_null to be a string")
-	assertEqual(t, updateRecord.TextNotNull, textNotNull)
-
-	// Test actual update
-	_, err = batch.Send()
-	assertFine(t, err)
-
-	updatedRecord, err := api.Read(id)
-	assertFine(t, err)
-	assertEqual(t, updateRecord.TextNotNull, updatedRecord.TextNotNull)
-}
-
-func TestTransactionDeleteOperation(t *testing.T) {
-	client := connect(t)
-	batch := client.Transaction()
-	api := NewRecordApi[SimpleStrict](client, "simple_strict_table")
-
-	// First create a record to delete
-	now := time.Now().Unix()
-	createRecord := SimpleStrict{
-		TextNotNull: fmt.Sprint("go transaction delete test: =?&", now),
-	}
-	id, err := api.Create(createRecord)
-	assertFine(t, err)
-
-	batch.API("simple_strict_table").Delete(id.ToString())
-
-	operation := batch.operations[0]
-	jsonBytes, err := json.Marshal(operation)
-	assertFine(t, err)
-
-	var jsonMap map[string]interface{}
-	err = json.Unmarshal(jsonBytes, &jsonMap)
-	assertFine(t, err)
-
-	deleteOp, ok := jsonMap["Delete"].(map[string]interface{})
-	assert(t, ok, "Expected Delete operation")
-	assertEqual(t, "simple_strict_table", deleteOp["apiName"])
-	assert(t, deleteOp["id"] != nil, "Expected id in delete operation")
-
-	// Test actual deletion
-	_, err = batch.Send()
-	assertFine(t, err)
-
-	// Verify the record was deleted
-	_, err = api.Read(id)
-	assert(t, err != nil, "Expected error reading deleted record")
-}
-
-func TestTransactionMultipleOperations(t *testing.T) {
-	client := connect(t)
-	batch := client.Transaction()
-	api := NewRecordApi[SimpleStrict](client, "simple_strict_table")
-
-	now := time.Now().Unix()
-
-	// Create operation
-	createRecord := SimpleStrict{
-		TextNotNull: fmt.Sprint("go transaction multi create: =?&", now),
-	}
-	createMap := map[string]interface{}{
-		"text_not_null": createRecord.TextNotNull,
-	}
-	batch.API("simple_strict_table").Create(createMap)
-
-	// Update operation for a non-existent record (will fail silently)
-	updateRecord := SimpleStrict{
-		TextNotNull: fmt.Sprint("go transaction multi update: =?&", now),
-	}
-	updateMap := map[string]interface{}{
-		"text_not_null": updateRecord.TextNotNull,
-	}
-	batch.API("simple_strict_table").Update("record1", updateMap)
-
-	// Delete operation for a non-existent record (will fail silently)
-	batch.API("simple_strict_table").Delete("record2")
-
-	// Verify operation order
-	assert(t, len(batch.operations) == 3, "Expected three operations")
-
-	// Test Create operation
-	createBytes, err := json.Marshal(batch.operations[0])
-	assertFine(t, err)
-	var createOpMap map[string]interface{}
-	err = json.Unmarshal(createBytes, &createOpMap)
-	assertFine(t, err)
-	_, ok := createOpMap["Create"]
-	assert(t, ok, "Expected Create operation")
-
-	// Test Update operation
-	updateBytes, err := json.Marshal(batch.operations[1])
-	assertFine(t, err)
-	var updateOpMap map[string]interface{}
-	err = json.Unmarshal(updateBytes, &updateOpMap)
-	assertFine(t, err)
-	_, ok = updateOpMap["Update"]
-	assert(t, ok, "Expected Update operation")
-
-	// Test Delete operation
-	deleteBytes, err := json.Marshal(batch.operations[2])
-	assertFine(t, err)
-	var deleteOpMap map[string]interface{}
-	err = json.Unmarshal(deleteBytes, &deleteOpMap)
-	assertFine(t, err)
-	_, ok = deleteOpMap["Delete"]
-	assert(t, ok, "Expected Delete operation")
-
-	// Test execution order with real operations
-	ids, err := batch.Send()
-	assertFine(t, err)
-	assert(t, len(ids) == 1, "Expected one ID from create operation")
-
-	// Verify the record was created using a new API instance
-	createdRecord, err := api.Read(StringRecordId(ids[0]))
-	assertFine(t, err)
-	assertEqual(t, createRecord.TextNotNull, createdRecord.TextNotNull)
 }

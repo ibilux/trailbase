@@ -58,9 +58,9 @@ class ITransactionBatch(Protocol):
 class IApiBatch(Protocol):
     def create(self, value: JSON_OBJECT) -> ITransactionBatch: ...
 
-    def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch: ...
+    def update(self, recordId: RecordId | str | int, value: JSON_OBJECT) -> ITransactionBatch: ...
 
-    def delete(self, record_id: str) -> ITransactionBatch: ...
+    def delete(self, recordId: RecordId | str | int) -> ITransactionBatch: ...
 
 
 class TransactionBatch:
@@ -105,15 +105,17 @@ class ApiBatch:
         self._batch.add_operation(operation)
         return self._batch
 
-    def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch:
+    def update(self, recordId: RecordId | str | int, value: JSON_OBJECT) -> ITransactionBatch:
+        id = repr(recordId) if isinstance(recordId, RecordId) else f"{recordId}"
         operation: Operation = {
-            "Update": {"api_name": self._api_name, "record_id": record_id, "value": value}
+            "Update": {"api_name": self._api_name, "record_id": id, "value": value}
         }
         self._batch.add_operation(operation)
         return self._batch
 
-    def delete(self, record_id: str) -> ITransactionBatch:
-        operation: Operation = {"Delete": {"api_name": self._api_name, "record_id": record_id}}
+    def delete(self, recordId: RecordId | str | int) -> ITransactionBatch:
+        id = repr(recordId) if isinstance(recordId, RecordId) else f"{recordId}"
+        operation: Operation = {"Delete": {"api_name": self._api_name, "record_id": id}}
         self._batch.add_operation(operation)
         return self._batch
 
