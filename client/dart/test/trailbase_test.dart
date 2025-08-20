@@ -451,7 +451,7 @@ Future<void> main() async {
       final client = await connect();
       final api = client.records('simple_strict_table');
 
-      final ids = [];
+      var ids = [];
 
       {
         final batch = client.transaction();

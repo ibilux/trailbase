@@ -107,9 +107,7 @@ class ApiBatch:
 
     def update(self, recordId: RecordId | str | int, value: JSON_OBJECT) -> ITransactionBatch:
         id = repr(recordId) if isinstance(recordId, RecordId) else f"{recordId}"
-        operation: Operation = {
-            "Update": {"api_name": self._api_name, "record_id": id, "value": value}
-        }
+        operation: Operation = {"Update": {"api_name": self._api_name, "record_id": id, "value": value}}
         self._batch.add_operation(operation)
         return self._batch
 
