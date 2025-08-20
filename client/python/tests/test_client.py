@@ -269,106 +269,38 @@ def test_subscriptions(trailbase: TrailBaseFixture):
     assert "Insert" in events[0]
 
 
-def test_transaction_create_operation(trailbase: TrailBaseFixture):
+def test_transaction(trailbase: TrailBaseFixture):
     assert trailbase.isUp()
-    
+
     client = connect()
-    batch = client.transaction()
-    
-    now = int(time())
-    record = {"text_not_null": f"transaction test create: {now}"}
-    batch.api("simple_strict_table").create(record)
-    
-    operation = batch._operations[0]
-    
-    assert "Create" in operation
-    assert operation["Create"]["api_name"] == "simple_strict_table"
-    assert operation["Create"]["value"] == record
-
-
-def test_transaction_update_operation(trailbase: TrailBaseFixture):
-    assert trailbase.isUp()
-    
-    client = connect()
-    batch = client.transaction()
-    
-    now = int(time())
-    record = {"text_not_null": f"transaction test update: {now}"}
-    batch.api("simple_strict_table").update("record1", record)
-    
-    operation = batch._operations[0]
-    
-    assert "Update" in operation
-    assert operation["Update"]["api_name"] == "simple_strict_table"
-    assert operation["Update"]["record_id"] == "record1"
-    assert operation["Update"]["value"] == record
-
-
-def test_transaction_delete_operation(trailbase: TrailBaseFixture):
-    assert trailbase.isUp()
-    
-    client = connect()
-    batch = client.transaction()
-    
-    batch.api("simple_strict_table").delete("record1")
-    
-    operation = batch._operations[0]
-    
-    assert "Delete" in operation
-    assert operation["Delete"]["api_name"] == "simple_strict_table"
-    assert operation["Delete"]["record_id"] == "record1"
-
-
-def test_transaction_multiple_operations(trailbase: TrailBaseFixture):
-    assert trailbase.isUp()
-    
-    client = connect()
-    batch = client.transaction()
-    
-    now = int(time())
-    batch.api("simple_strict_table").create({"text_not_null": f"transaction test first: {now}"})
-    batch.api("simple_strict_table").update("record1", {"text_not_null": f"transaction test second: {now}"})
-    batch.api("simple_strict_table").delete("record2")
-    
-    # Verify operation order is preserved
-    assert len(batch._operations) == 3
-    assert "Create" in batch._operations[0]
-    assert "Update" in batch._operations[1]
-    assert "Delete" in batch._operations[2]
-
-
-def test_transaction_execute(trailbase: TrailBaseFixture):
-    assert trailbase.isUp()
-    
-    client = connect()
-    batch = client.transaction()
     api = client.records("simple_strict_table")
-    
-    # Create a record through transaction
-    now = int(time())
-    record = {"text_not_null": f"transaction test execute: {now}"}
-    batch.api("simple_strict_table").create(record)
-    
-    # Execute the transaction and get the IDs
-    ids = batch.send()
-    assert len(ids) == 1
-    
-    # Verify the record was created
-    created_record = api.read(ids[0])
-    assert created_record["text_not_null"] == record["text_not_null"]
-    
-    # Update and delete in the same transaction
-    batch = client.transaction()
-    update_record = {"text_not_null": f"transaction test updated: {now}"}
-    batch.api("simple_strict_table").update(ids[0], update_record)
-    batch.api("simple_strict_table").delete(ids[0])
-    
-    # Execute the transaction
-    batch.send()
-    
-    # Verify the record was deleted
-    with pytest.raises(Exception):
-        api.read(ids[0])
+    ids: List[RecordId] = []
+
+    if True:
+        now = int(time())
+        batch = client.transaction()
+        message = f"transaction test create: {now}"
+        batch.api("simple_strict_table").create({"text_not_null": message})
+        ids = batch.send()
+        record = api.read(ids[0])
+        assert record["text_not_null"] == message
+
+    if True:
+        now = int(time())
+        batch = client.transaction()
+        updatedMessage = f"transaction test update: {now}"
+        batch.api("simple_strict_table").update(ids[0], {"text_not_null": updatedMessage})
+        batch.send()
+        record = api.read(ids[0])
+        assert record["text_not_null"] == updatedMessage
+
+    if True:
+        batch = client.transaction()
+        batch.api("simple_strict_table").delete(ids[0])
+        batch.send()
+
+        with pytest.raises(Exception):
+            api.read(ids[0])
 
 
 logger = logging.getLogger(__name__)

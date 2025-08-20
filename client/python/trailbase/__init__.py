@@ -2,23 +2,6 @@ __title__ = "trailbase"
 __description__ = "TrailBase client SDK for python."
 __version__ = "0.1.0"
 
-__all__ = [
-    "Client",
-    "CompareOp",
-    "Filter",
-    "And",
-    "Or",
-    "RecordId",
-    "User",
-    "ListResponse",
-    "Tokens",
-    "JSON",
-    "JSON_OBJECT",
-    "JSON_ARRAY",
-    "TransactionBatch",
-    "ApiBatch"
-]
-
 import httpx
 import jwt
 import logging
@@ -28,55 +11,56 @@ import json
 from enum import Enum
 from contextlib import contextmanager
 from time import time
-from typing import TypeAlias, cast, final, Any, Union, List, Dict, Protocol
+from typing import TypeAlias, List, Protocol, cast, final
 
-JSON = Union[dict[str, Any], list[Any], str, int, float, bool, None]
-JSON_OBJECT = dict[str, JSON]
-JSON_ARRAY = list[JSON]
+JSON: TypeAlias = dict[str, "JSON"] | list["JSON"] | str | int | float | bool | None
+JSON_OBJECT: TypeAlias = dict[str, JSON]
+JSON_ARRAY: TypeAlias = list[JSON]
+
 
 # Transaction related classes and protocols
 class CreateOperation(typing.TypedDict):
     api_name: str
     value: JSON_OBJECT
 
+
 class UpdateOperation(typing.TypedDict):
     api_name: str
     record_id: str
     value: JSON_OBJECT
 
+
 class DeleteOperation(typing.TypedDict):
     api_name: str
     record_id: str
+
 
 class Operation(typing.TypedDict, total=False):
     Create: CreateOperation
     Update: UpdateOperation
     Delete: DeleteOperation
 
+
 class TransactionRequest(typing.TypedDict):
     operations: List[Operation]
+
 
 class TransactionResponse(typing.TypedDict):
     ids: List[str]
 
 
 class ITransactionBatch(Protocol):
-    def api(self, api_name: str) -> "IApiBatch":
-        ...
+    def api(self, api_name: str) -> "IApiBatch": ...
 
-    def send(self) -> List[str]:
-        ...
+    def send(self) -> List[str]: ...
 
 
 class IApiBatch(Protocol):
-    def create(self, value: JSON_OBJECT) -> ITransactionBatch:
-        ...
+    def create(self, value: JSON_OBJECT) -> ITransactionBatch: ...
 
-    def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch:
-        ...
+    def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch: ...
 
-    def delete(self, record_id: str) -> ITransactionBatch:
-        ...
+    def delete(self, record_id: str) -> ITransactionBatch: ...
 
 
 class TransactionBatch:
@@ -103,7 +87,6 @@ class TransactionBatch:
         result: TransactionResponse = response.json()
         return result.get("ids", [])
 
-
     def add_operation(self, operation: Operation) -> None:
         """Add an operation to the batch."""
         self._operations.append(operation)
@@ -123,19 +106,14 @@ class ApiBatch:
         return self._batch
 
     def update(self, record_id: str, value: JSON_OBJECT) -> ITransactionBatch:
-        operation: Operation = {"Update": {
-            "api_name": self._api_name,
-            "record_id": record_id,
-            "value": value
-        }}
+        operation: Operation = {
+            "Update": {"api_name": self._api_name, "record_id": record_id, "value": value}
+        }
         self._batch.add_operation(operation)
         return self._batch
 
     def delete(self, record_id: str) -> ITransactionBatch:
-        operation: Operation = {"Delete": {
-            "api_name": self._api_name,
-            "record_id": record_id
-        }}
+        operation: Operation = {"Delete": {"api_name": self._api_name, "record_id": record_id}}
         self._batch.add_operation(operation)
         return self._batch
 
@@ -706,7 +684,7 @@ class RecordApi:
         if response.status_code > 200:
             raise Exception(f"{response}")
 
-    def subscribe(self, recordId: RecordId | str | int) -> typing.Generator[JSON_OBJECT]:
+    def subscribe(self, recordId: RecordId | str | int) -> typing.Generator[JSON_OBJECT, None, None]:
         id = repr(recordId) if isinstance(recordId, RecordId) else f"{recordId}"
         context = self._client.stream(
             f"{self._recordApi}/{self._name}/subscribe/{id}", timeout=httpx.Timeout(None)
