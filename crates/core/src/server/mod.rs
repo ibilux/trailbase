@@ -336,7 +336,7 @@ impl Server {
     custom_router: Option<Router<AppState>>,
   ) -> (String, Router<()>) {
     let enable_transactions =
-      state.access_config(|conn| conn.server.enable_record_transactions.unwrap_or(false));
+      state.access_config(|conn| conn.server.enable_record_transactions.unwrap_or(true));
 
     let mut router = Router::new()
       // Public, stable and versioned APIs.

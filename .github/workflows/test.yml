@@ -11,6 +11,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      TRAIL_ENABLE_RECORD_TRANSACTIONS: true
     steps:
       - uses: actions/checkout@v3
         with:
