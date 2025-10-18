@@ -80,32 +80,52 @@ pub(crate) fn row_to_json_expand(
           return Ok((column.name.clone(), serde_json::Value::Null));
         }
 
-        if let Some(foreign_value) = expand.and_then(|e| e.get(&column.name)) {
-          if is_foreign_key(&column.options) {
-            let id = value_to_flat_json(value)?;
+        if let Some(foreign_value) = expand.and_then(|e| e.get(&column.name))
+          && is_foreign_key(&column.options)
+        {
+          let id = value_to_flat_json(value)?;
 
-            return Ok(match foreign_value {
-              serde_json::Value::Null => (
-                column.name.clone(),
-                serde_json::json!({
-                  "id": id,
-                }),
-              ),
-              value => (
-                column.name.clone(),
-                serde_json::json!({
-                  "id": id,
-                  "data": value,
-                }),
-              ),
-            });
-          }
+          return Ok(match foreign_value {
+            serde_json::Value::Null => (
+              column.name.clone(),
+              serde_json::json!({
+                "id": id,
+              }),
+            ),
+            value => (
+              column.name.clone(),
+              serde_json::json!({
+                "id": id,
+                "data": value,
+              }),
+            ),
+          });
         }
 
-        if let types::Value::Text(str) = &value {
-          if json_metadata[i].is_some() {
-            return Ok((column.name.clone(), serde_json::from_str(str)?));
-          }
+        // Deserialize JSON.
+        if let types::Value::Text(str) = value {
+          match json_metadata[i].as_ref() {
+            Some(JsonColumnMetadata::SchemaName(x)) if x == "std.FileUpload" => {
+              #[allow(unused_mut)]
+              let mut value: serde_json::Value = serde_json::from_str(str)?;
+              #[cfg(not(test))]
+              value.as_object_mut().map(|o| o.remove("id"));
+              return Ok((column.name.clone(), value));
+            }
+            Some(JsonColumnMetadata::SchemaName(x)) if x == "std.FileUploads" => {
+              #[allow(unused_mut)]
+              let mut values: Vec<serde_json::Value> = serde_json::from_str(str)?;
+              #[cfg(not(test))]
+              for value in &mut values {
+                value.as_object_mut().map(|o| o.remove("id"));
+              }
+              return Ok((column.name.clone(), serde_json::Value::Array(values)));
+            }
+            Some(JsonColumnMetadata::SchemaName(_)) | Some(JsonColumnMetadata::Pattern(_)) => {
+              return Ok((column.name.clone(), serde_json::from_str(str)?));
+            }
+            None => {}
+          };
         }
 
         return Ok((column.name.clone(), value_to_flat_json(value)?));

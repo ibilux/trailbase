@@ -6,11 +6,10 @@ mod sqlite;
 
 use bytes::Bytes;
 use core::future::Future;
-use futures_util::TryFutureExt;
-use futures_util::future::LocalBoxFuture;
+use futures_util::future::BoxFuture;
 use http_body_util::combinators::BoxBody;
 use parking_lot::Mutex;
-use std::rc::Rc;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
@@ -64,7 +63,6 @@ wasmtime::component::bindgen!({
         "trailbase:runtime/host-endpoint/tx-rollback": trappable,
         "trailbase:runtime/host-endpoint/tx-execute": trappable,
         "trailbase:runtime/host-endpoint/tx-query": trappable,
-        "trailbase:runtime/host-endpoint/thread-id": trappable,
         default: async | trappable,
     },
     exports: {
@@ -87,13 +85,15 @@ pub enum Error {
 }
 
 pub enum Message {
-  Run(Box<dyn FnOnce(Rc<RuntimeInstance>) -> LocalBoxFuture<'static, ()> + Send>),
+  Run(Box<dyn (FnOnce(Arc<RuntimeInstance>) -> BoxFuture<'static, ()>) + Send>),
 }
 
-#[derive(Clone)]
-struct LockedTransaction(Rc<Mutex<Option<sqlite::OwnedTx>>>);
+pub enum ExecutorMessage {
+  Run(Box<dyn (FnOnce() -> BoxFuture<'static, ()>) + Send>),
+}
 
-unsafe impl Send for LockedTransaction {}
+/// NOTE: This is needed due to State needing to be Send.
+unsafe impl Send for sqlite::OwnedTx {}
 
 struct State {
   resource_table: ResourceTable,
@@ -102,13 +102,13 @@ struct State {
   kv: WasiKeyValueCtx,
 
   shared: Arc<SharedState>,
-  tx: LockedTransaction,
+  tx: Arc<Mutex<Option<sqlite::OwnedTx>>>,
 }
 
 impl Drop for State {
   fn drop(&mut self) {
     #[cfg(debug_assertions)]
-    if self.tx.0.lock().is_some() {
+    if self.tx.lock().is_some() {
       log::warn!("pending transaction locking the DB");
     }
   }
@@ -174,10 +174,6 @@ impl WasiHttpView for State {
 }
 
 impl trailbase::runtime::host_endpoint::Host for State {
-  fn thread_id(&mut self) -> wasmtime::Result<u64> {
-    return Ok(self.shared.thread_id);
-  }
-
   fn execute(
     &mut self,
     query: String,
@@ -186,17 +182,15 @@ impl trailbase::runtime::host_endpoint::Host for State {
     let conn = self.shared.conn.clone();
     let params: Vec<_> = params.into_iter().map(to_sqlite_value).collect();
 
-    return self
-      .shared
-      .runtime
-      .spawn(async move {
+    return async move {
+      Ok(
         conn
           .execute(query, params)
           .await
           .map_err(|err| TxError::Other(err.to_string()))
-          .map(|v| v as u64)
-      })
-      .map_err(|err| wasmtime::Error::msg(err.to_string()));
+          .map(|v| v as u64),
+      )
+    };
   }
 
   fn query(
@@ -207,35 +201,31 @@ impl trailbase::runtime::host_endpoint::Host for State {
     let conn = self.shared.conn.clone();
     let params: Vec<_> = params.into_iter().map(to_sqlite_value).collect();
 
-    return self
-      .shared
-      .runtime
-      .spawn(async move {
-        let rows = conn
-          .write_query_rows(query, params)
-          .await
-          .map_err(|err| TxError::Other(err.to_string()))?;
+    return async move {
+      let rows = conn
+        .write_query_rows(query, params)
+        .await
+        .map_err(|err| TxError::Other(err.to_string()))?;
 
-        let values: Vec<_> = rows
-          .into_iter()
-          .map(|trailbase_sqlite::Row(row, _col)| {
-            return row.into_iter().map(from_sqlite_value).collect::<Vec<_>>();
-          })
-          .collect();
+      let values: Vec<_> = rows
+        .into_iter()
+        .map(|trailbase_sqlite::Row(row, _col)| {
+          return row.into_iter().map(from_sqlite_value).collect::<Vec<_>>();
+        })
+        .collect();
 
-        Ok(values)
-      })
-      .map_err(|err| wasmtime::Error::msg(err.to_string()));
+      Ok(Ok(values))
+    };
   }
 
   fn tx_begin(&mut self) -> impl Future<Output = wasmtime::Result<Result<(), TxError>>> + Send {
     async fn begin(
       conn: trailbase_sqlite::Connection,
-      tx: LockedTransaction,
+      tx: &Mutex<Option<sqlite::OwnedTx>>,
     ) -> Result<(), TxError> {
-      assert!(tx.0.lock().is_none());
+      assert!(tx.lock().is_none());
 
-      *tx.0.lock() = Some(
+      *tx.lock() = Some(
         sqlite::new_tx(conn)
           .await
           .map_err(|err| TxError::Other(err.to_string()))?,
@@ -245,16 +235,12 @@ impl trailbase::runtime::host_endpoint::Host for State {
     }
 
     let tx = self.tx.clone();
-    return self
-      .shared
-      .runtime
-      .spawn(begin(self.shared.conn.clone(), tx))
-      .map_err(|err| wasmtime::Error::msg(err.to_string()));
+    return async move { Ok(begin(self.shared.conn.clone(), &tx).await) };
   }
 
   fn tx_commit(&mut self) -> wasmtime::Result<Result<(), TxError>> {
-    fn commit(tx: LockedTransaction) -> Result<(), TxError> {
-      let Some(tx) = tx.0.lock().take() else {
+    fn commit(tx: &Mutex<Option<sqlite::OwnedTx>>) -> Result<(), TxError> {
+      let Some(tx) = tx.lock().take() else {
         return Err(TxError::Other("no pending tx".to_string()));
       };
 
@@ -267,12 +253,12 @@ impl trailbase::runtime::host_endpoint::Host for State {
       return Ok(());
     }
 
-    return Ok(commit(self.tx.clone()));
+    return Ok(commit(&self.tx));
   }
 
   fn tx_rollback(&mut self) -> wasmtime::Result<Result<(), TxError>> {
-    fn rollback(tx: LockedTransaction) -> Result<(), TxError> {
-      let Some(tx) = tx.0.lock().take() else {
+    fn rollback(tx: &Mutex<Option<sqlite::OwnedTx>>) -> Result<(), TxError> {
+      let Some(tx) = tx.lock().take() else {
         return Err(TxError::Other("no pending tx".to_string()));
       };
 
@@ -285,7 +271,7 @@ impl trailbase::runtime::host_endpoint::Host for State {
       return Ok(());
     }
 
-    return Ok(rollback(self.tx.clone()));
+    return Ok(rollback(&self.tx));
   }
 
   fn tx_execute(
@@ -293,10 +279,14 @@ impl trailbase::runtime::host_endpoint::Host for State {
     query: String,
     params: Vec<Value>,
   ) -> wasmtime::Result<Result<u64, TxError>> {
-    fn execute(tx: LockedTransaction, query: String, params: Vec<Value>) -> Result<u64, TxError> {
+    fn execute(
+      tx: &Mutex<Option<sqlite::OwnedTx>>,
+      query: String,
+      params: Vec<Value>,
+    ) -> Result<u64, TxError> {
       let params: Vec<_> = params.into_iter().map(to_sqlite_value).collect();
 
-      let Some(ref tx) = *tx.0.lock() else {
+      let Some(ref tx) = *tx.lock() else {
         return Err(TxError::Other("No open transaction".to_string()));
       };
 
@@ -316,7 +306,7 @@ impl trailbase::runtime::host_endpoint::Host for State {
       );
     }
 
-    return Ok(execute(self.tx.clone(), query, params));
+    return Ok(execute(&self.tx, query, params));
   }
 
   fn tx_query(
@@ -325,13 +315,13 @@ impl trailbase::runtime::host_endpoint::Host for State {
     params: Vec<Value>,
   ) -> wasmtime::Result<Result<Vec<Vec<Value>>, TxError>> {
     fn query_fn(
-      tx: LockedTransaction,
+      tx: &Mutex<Option<sqlite::OwnedTx>>,
       query: String,
       params: Vec<Value>,
     ) -> Result<Vec<Vec<Value>>, TxError> {
       let params: Vec<_> = params.into_iter().map(to_sqlite_value).collect();
 
-      let Some(ref tx) = *tx.0.lock() else {
+      let Some(ref tx) = *tx.lock() else {
         return Err(TxError::Other("No open transaction".to_string()));
       };
 
@@ -357,7 +347,66 @@ impl trailbase::runtime::host_endpoint::Host for State {
       return Ok(values);
     }
 
-    return Ok(query_fn(self.tx.clone(), query, params));
+    return Ok(query_fn(&self.tx, query, params));
+  }
+}
+
+pub struct SharedExecutor {
+  /// Just needed to create a new Tokio runtime.
+  spawner: Option<std::thread::JoinHandle<()>>,
+  shared_sender: kanal::AsyncSender<ExecutorMessage>,
+}
+
+impl Drop for SharedExecutor {
+  fn drop(&mut self) {
+    let _ = self.shared_sender.close();
+    if let Some(spawner) = std::mem::take(&mut self.spawner) {
+      let _ = spawner.join();
+    }
+  }
+}
+
+impl SharedExecutor {
+  pub fn new(n_threads: Option<usize>) -> Arc<Self> {
+    let n_threads = n_threads
+      .or(std::thread::available_parallelism().ok().map(|n| n.get()))
+      .unwrap_or(1);
+
+    log::info!("Starting WASM executor with {n_threads} threads.");
+    let (shared_sender, shared_receiver) = kanal::unbounded_async::<ExecutorMessage>();
+
+    let executor_event_loop = async move || {
+      // Event loop.
+      loop {
+        match shared_receiver.recv().await {
+          Ok(ExecutorMessage::Run(f)) => {
+            tokio::spawn(f());
+          }
+          Err(_) => {
+            // Channel closed
+            return;
+          }
+        };
+      }
+    };
+
+    let spawner = std::thread::Builder::new()
+      .name("wasm-runtime-spawner".to_string())
+      .spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+          .worker_threads(n_threads)
+          .enable_all()
+          .build()
+          .expect("startup");
+
+        rt.block_on(executor_event_loop());
+      })
+      .expect("startup");
+
+    return Arc::new(Self {
+      spawner: Some(spawner),
+      shared_sender,
+    });
   }
 }
 
@@ -365,25 +414,14 @@ pub struct Runtime {
   /// Path to original .wasm component file.
   pub component_path: std::path::PathBuf,
 
-  // Shared sender.
   shared_sender: kanal::AsyncSender<Message>,
-  threads: Vec<(std::thread::JoinHandle<()>, kanal::AsyncSender<Message>)>,
+
+  /// Reference to executor to keep it alive. It executes this Runtime's event-loop.
+  #[allow(unused)]
+  executor: Arc<SharedExecutor>,
 }
 
-impl Drop for Runtime {
-  fn drop(&mut self) {
-    for (handle, ch) in std::mem::take(&mut self.threads) {
-      // Dropping the private channel will trigger the event_loop to return.
-      drop(ch);
-
-      if let Err(err) = handle.join() {
-        log::error!("Failed to join main rt thread: {err:?}");
-      }
-    }
-  }
-}
-
-fn build_config(cache: Option<wasmtime::Cache>) -> Config {
+fn build_config(cache: Option<wasmtime::Cache>, use_winch: bool) -> Config {
   let mut config = Config::new();
 
   // Execution settings.
@@ -394,31 +432,41 @@ fn build_config(cache: Option<wasmtime::Cache>) -> Config {
 
   // Compilation settings.
   config.cache(cache);
-  config.cranelift_opt_level(wasmtime::OptLevel::Speed);
-  config.parallel_compilation(true);
+
+  if use_winch {
+    config.strategy(wasmtime::Strategy::Winch);
+  } else {
+    config.strategy(wasmtime::Strategy::Cranelift);
+    config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+    config.parallel_compilation(true);
+  }
 
   return config;
 }
 
 #[derive(Clone, Default, Debug)]
 pub struct RuntimeOptions {
-  /// Number of threads the runtime will schedule on.
-  pub n_threads: Option<usize>,
-
   /// Optional file-system sandbox root for r/o file access.
   pub fs_root_path: Option<std::path::PathBuf>,
+
+  /// Whether to use the non-optimizing baseline compiler.
+  pub use_winch: bool,
 }
 
 impl Runtime {
   pub fn new(
+    executor: Arc<SharedExecutor>,
     wasm_source_file: std::path::PathBuf,
     conn: trailbase_sqlite::Connection,
     kv_store: KvStore,
     opts: RuntimeOptions,
   ) -> Result<Self, Error> {
-    let engine = Engine::new(&build_config(Some(wasmtime::Cache::new(
-      wasmtime::CacheConfig::default(),
-    )?)))?;
+    let engine = {
+      let cache = wasmtime::Cache::new(wasmtime::CacheConfig::default())?;
+      let config = build_config(Some(cache), opts.use_winch);
+
+      Engine::new(&config)?
+    };
 
     // Load the component - a very expensive operation generating code. Compilation happens in
     // parallel and will saturate the entire machine.
@@ -430,7 +478,7 @@ impl Runtime {
         .wasm_binary_or_text_file(&wasm_source_file)?
         .compile_component()?;
 
-      // NOTE: According to docs, this shouldn't do anything.
+      // NOTE: According to docs, this should not do anything.
       component.initialize_copy_on_write_image()?;
 
       if let Ok(elapsed) = SystemTime::now().duration_since(start) {
@@ -459,83 +507,67 @@ impl Runtime {
       linker
     };
 
-    let n_threads = opts
-      .n_threads
-      .or(std::thread::available_parallelism().ok().map(|n| n.get()))
-      .unwrap_or(1);
-
-    log::info!("Starting WASM runtime with {n_threads} threads.");
-
     let (shared_sender, shared_receiver) = kanal::unbounded_async::<Message>();
-    let threads = (0..n_threads)
-      .map(|index| -> Result<_, Error> {
-        let (private_sender, private_receiver) = kanal::unbounded_async::<Message>();
 
-        let shared_receiver = shared_receiver.clone();
+    {
+      let engine = engine.clone();
+      let component = component.clone();
+      let linker = linker.clone();
 
-        let engine = engine.clone();
-        let component = component.clone();
-        let linker = linker.clone();
+      let conn = conn.clone();
+      let kv_store = kv_store.clone();
+      let fs_root_path = opts.fs_root_path.clone();
 
-        let conn = conn.clone();
-        let kv_store = kv_store.clone();
-        let fs_root_path = opts.fs_root_path.clone();
+      let shared_state = Arc::new(SharedState {
+        conn,
+        kv_store,
+        fs_root_path,
+      });
 
-        let handle = std::thread::Builder::new()
-          .name(format!("wasm-runtime-{index}"))
-          .spawn(move || {
-            // Note: Arc rather than Rc, since State and thus SharedState needs to be Send + Sync.
-            let tokio_runtime = tokio::runtime::Builder::new_current_thread()
-              .enable_time()
-              .enable_io()
-              .build()
-              .expect("startup");
+      let instance = RuntimeInstance {
+        engine,
+        component,
+        linker,
+        shared: shared_state,
+      };
 
-            let shared_state = Arc::new(SharedState {
-              runtime: tokio_runtime,
-              conn,
-              thread_id: index as u64,
-              kv_store,
-              fs_root_path,
-            });
-
-            let instance = RuntimeInstance {
-              engine,
-              component,
-              linker,
-              shared: shared_state.clone(),
-            };
-            // RuntimeInstance::new(engine, component, linker, shared_state).expect("startup");
-
-            event_loop(shared_state, instance, private_receiver, shared_receiver);
-          })
-          .expect("failed to spawn thread");
-
-        return Ok((handle, private_sender));
-      })
-      .collect::<Result<Vec<_>, Error>>()?;
+      let wasm_source_file = wasm_source_file.clone();
+      executor
+        .shared_sender
+        .as_sync()
+        .send(ExecutorMessage::Run(Box::new(move || {
+          return Box::pin(async move {
+            async_event_loop(wasm_source_file, instance, shared_receiver).await;
+          });
+        })))
+        .expect("startup");
+    }
 
     return Ok(Self {
       component_path: wasm_source_file,
       shared_sender,
-      threads,
+      executor,
     });
   }
 
-  pub async fn call<O, F>(&self, f: F) -> Result<O, Error>
+  pub async fn call<O, F, Fut>(&self, f: F) -> Result<O, Error>
   where
-    F: (AsyncFnOnce(&RuntimeInstance) -> O) + Send + 'static,
+    F: (FnOnce(Arc<RuntimeInstance>) -> Fut) + Send + 'static,
+    Fut: Future<Output = O> + Send,
     O: Send + 'static,
   {
     let (sender, receiver) = tokio::sync::oneshot::channel::<O>();
 
     self
       .shared_sender
-      .send(Message::Run(Box::new(move |runtime| {
-        Box::pin(async move {
-          let _ = sender.send(f(&*runtime).await);
-        })
-      })))
+      .send(Message::Run(Box::new(
+        move |runtime: Arc<RuntimeInstance>| {
+          let x = Box::pin(async move { f(runtime).await });
+          Box::pin(async move {
+            let _ = sender.send(x.await);
+          })
+        },
+      )))
       .await
       .map_err(|_| Error::ChannelClosed)?;
 
@@ -543,64 +575,50 @@ impl Runtime {
   }
 }
 
-fn event_loop(
-  shared_state: Arc<SharedState>,
+async fn async_event_loop(
+  component_path: PathBuf,
   instance: RuntimeInstance,
-  private_recv: kanal::AsyncReceiver<Message>,
   shared_recv: kanal::AsyncReceiver<Message>,
 ) {
-  let thread_id = shared_state.thread_id;
-  let local = tokio::task::LocalSet::new();
-  let instance = Rc::new(instance);
+  let instance = Arc::new(instance);
 
-  local.block_on(&shared_state.runtime, async move {
-    let local_in_flight = Rc::new(AtomicUsize::new(0));
+  let local_in_flight = Arc::new(AtomicUsize::new(0));
 
-    loop {
-      let receive_message = async || {
-        return tokio::select! {
-          msg = private_recv.recv() => msg,
-          msg = shared_recv.recv() => msg,
-        };
-      };
+  loop {
+    log::debug!(
+      "WASM runtime ({component_path:?}) waiting for new messages. In flight: {}, {}",
+      local_in_flight.load(Ordering::Relaxed),
+      IN_FLIGHT.load(Ordering::Relaxed)
+    );
 
-      log::debug!(
-        "Waiting for new messages (thread: {thread_id}). In flight: {}, {}",
-        local_in_flight.load(Ordering::Relaxed),
-        IN_FLIGHT.load(Ordering::Relaxed)
-      );
+    match shared_recv.recv().await {
+      Ok(Message::Run(f)) => {
+        let instance = instance.clone();
 
-      match receive_message().await {
-        Ok(Message::Run(f)) => {
-          let instance = instance.clone();
+        let local_in_flight = local_in_flight.clone();
+        local_in_flight.fetch_add(1, Ordering::Relaxed);
 
-          let local_in_flight = local_in_flight.clone();
-          local_in_flight.fetch_add(1, Ordering::Relaxed);
+        IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
 
-          IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+        tokio::spawn(async move {
+          f(instance).await;
 
-          tokio::task::spawn_local(async move {
-            f(instance).await;
+          IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+          local_in_flight.fetch_sub(1, Ordering::Relaxed);
+        });
 
-            IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
-            local_in_flight.fetch_sub(1, Ordering::Relaxed);
-          });
-
-          // Yield before listening for more messages to give JS a chance to run.
-          tokio::task::yield_now().await;
-        }
-        Err(_) => {
-          // Channel closed
-          return;
-        }
-      };
-    }
-  });
+        // Yield before listening for more messages to give the runtime a chance to run.
+        // tokio::task::yield_now().await;
+      }
+      Err(_) => {
+        // Channel closed
+        return;
+      }
+    };
+  }
 }
 
 pub struct SharedState {
-  pub thread_id: u64,
-  pub runtime: tokio::runtime::Runtime,
   pub conn: trailbase_sqlite::Connection,
   pub kv_store: KvStore,
   pub fs_root_path: Option<std::path::PathBuf>,
@@ -645,7 +663,7 @@ impl RuntimeInstance {
         http: WasiHttpCtx::new(),
         kv: WasiKeyValueCtx::new(self.shared.kv_store.clone()),
         shared: self.shared.clone(),
-        tx: LockedTransaction(Rc::new(Mutex::new(None))),
+        tx: Arc::new(Mutex::new(None)),
       },
     ));
   }
@@ -702,7 +720,7 @@ impl RuntimeInstance {
     // In the current setup, if the listening side hangs-up the they call may not be aborted.
     // Depends on what the implementation does when the streaming body's receiving end gets
     // out of scope.
-    let handle = self.shared.runtime.spawn(async move {
+    let handle = tokio::spawn(async move {
       proxy
         .wasi_http_incoming_handler()
         .call_handle(&mut store, req, out)
@@ -782,14 +800,15 @@ mod tests {
 
   #[tokio::test]
   async fn test_init() {
+    let executor = SharedExecutor::new(Some(2));
     let conn = trailbase_sqlite::Connection::open_in_memory().unwrap();
     let kv_store = KvStore::new();
     let runtime = Runtime::new(
+      executor,
       "../../client/testfixture/wasm/wasm_rust_guest_testfixture.wasm".into(),
       conn.clone(),
       kv_store,
       RuntimeOptions {
-        n_threads: Some(2),
         ..Default::default()
       },
     )
@@ -827,15 +846,16 @@ mod tests {
 
   #[tokio::test]
   async fn test_transaction() {
+    let executor = SharedExecutor::new(Some(2));
     let conn = trailbase_sqlite::Connection::open_in_memory().unwrap();
     let kv_store = KvStore::new();
     let runtime = Arc::new(
       Runtime::new(
+        executor,
         "../../client/testfixture/wasm/wasm_rust_guest_testfixture.wasm".into(),
         conn.clone(),
         kv_store,
         RuntimeOptions {
-          n_threads: Some(2),
           ..Default::default()
         },
       )

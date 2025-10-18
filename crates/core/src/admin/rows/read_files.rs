@@ -3,18 +3,18 @@ use axum::{
   response::Response,
 };
 use serde::Deserialize;
-use trailbase_schema::QualifiedName;
 use trailbase_schema::json::flat_json_to_value;
+use trailbase_schema::{FileUploads, QualifiedName};
 use ts_rs::TS;
 
 use crate::admin::AdminError as Error;
 use crate::app_state::AppState;
 use crate::records::files::read_file_into_response;
-use crate::records::read_queries::{run_get_file_query, run_get_files_query};
+use crate::records::read_queries::run_get_files_query;
 
 #[derive(Debug, Deserialize, TS)]
 #[ts(export)]
-pub struct ReadFilesRequest {
+pub struct ReadFilesQuery {
   pk_column: String,
 
   /// The primary key (of any type since we're in row instead of RecordAPI land) of rows that
@@ -23,13 +23,13 @@ pub struct ReadFilesRequest {
   pk_value: serde_json::Value,
 
   file_column_name: String,
-  file_index: Option<usize>,
+  file_name: Option<String>,
 }
 
 pub async fn read_files_handler(
   State(state): State<AppState>,
   Path(table_name): Path<String>,
-  Query(request): Query<ReadFilesRequest>,
+  Query(query): Query<ReadFilesQuery>,
 ) -> Result<Response, Error> {
   let table_name = QualifiedName::parse(&table_name)?;
   let Some(schema_metadata) = state.schema_metadata().get_table(&table_name) else {
@@ -37,59 +37,56 @@ pub async fn read_files_handler(
       "Table {table_name:?} not found"
     )));
   };
-  let pk_col = &request.pk_column;
-
-  let Some((_index, col)) = schema_metadata.column_by_name(pk_col) else {
-    return Err(Error::Precondition(format!("Missing column: {pk_col}")));
+  let Some((_index, pk_col)) = schema_metadata.column_by_name(&query.pk_column) else {
+    return Err(Error::Precondition(format!(
+      "Missing PK column: {}",
+      query.pk_column
+    )));
   };
 
-  if !col.is_primary() {
-    return Err(Error::Precondition(format!("Not a primary key: {pk_col}")));
+  if !pk_col.is_primary() {
+    return Err(Error::Precondition(format!(
+      "Not a primary key: {pk_col:?}"
+    )));
   }
 
-  let Some((index, file_col_metadata)) = schema_metadata.column_by_name(&request.file_column_name)
+  let Some((index, file_col_metadata)) = schema_metadata.column_by_name(&query.file_column_name)
   else {
     return Err(Error::Precondition(format!(
-      "Missing column: {}",
-      request.file_column_name
+      "Missing file column: {}",
+      query.file_column_name
     )));
   };
   let Some(file_col_json_metadata) = schema_metadata.json_metadata.columns[index].as_ref() else {
     return Err(Error::Precondition(format!(
       "Not a JSON column: {}",
-      request.file_column_name
+      query.file_column_name
     )));
   };
 
-  let pk_value = flat_json_to_value(col.data_type, request.pk_value, true)?;
+  let pk_value = flat_json_to_value(pk_col.data_type, query.pk_value, true)?;
 
-  return if let Some(file_index) = request.file_index {
-    let mut file_uploads = run_get_files_query(
-      &state,
-      &table_name.into(),
-      file_col_metadata,
-      file_col_json_metadata,
-      &request.pk_column,
-      pk_value,
-    )
-    .await?;
+  let FileUploads(mut file_uploads) = run_get_files_query(
+    &state,
+    &table_name.into(),
+    file_col_metadata,
+    file_col_json_metadata,
+    &query.pk_column,
+    pk_value,
+  )
+  .await?;
 
-    if file_index >= file_uploads.0.len() {
-      return Err(Error::Precondition(format!("Out of bounds: {file_index}")));
-    }
+  if file_uploads.is_empty() {
+    return Err(Error::Precondition("Empty list of files".to_string()));
+  }
 
-    Ok(read_file_into_response(&state, file_uploads.0.remove(file_index)).await?)
+  return if let Some(filename) = query.file_name {
+    let Some(file) = file_uploads.into_iter().find(|f| f.filename() == filename) else {
+      return Err(Error::Precondition(format!("File '{filename}' not found")));
+    };
+
+    Ok(read_file_into_response(&state, file).await?)
   } else {
-    let file_upload = run_get_file_query(
-      &state,
-      &table_name.into(),
-      file_col_metadata,
-      file_col_json_metadata,
-      &request.pk_column,
-      pk_value,
-    )
-    .await?;
-
-    Ok(read_file_into_response(&state, file_upload).await?)
+    Ok(read_file_into_response(&state, file_uploads.remove(0)).await?)
   };
 }

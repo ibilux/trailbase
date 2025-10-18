@@ -1,5 +1,6 @@
 use base64::prelude::*;
 use futures_lite::StreamExt;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use temp_dir::TempDir;
@@ -18,6 +19,9 @@ impl Drop for Server {
 }
 
 const PORT: u16 = 4057;
+lazy_static! {
+  static ref SITE: String = format!("http://127.0.0.1:{PORT}");
+}
 
 fn start_server() -> Result<Server, std::io::Error> {
   let cwd = std::env::current_dir()?;
@@ -52,7 +56,7 @@ fn start_server() -> Result<Server, std::io::Error> {
 
   runtime.block_on(async {
     let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{PORT}/api/healthcheck");
+    let url = format!("{site}/api/healthcheck", site = *SITE);
 
     for _ in 0..100 {
       let response = client.get(&url).send().await;
@@ -120,7 +124,7 @@ struct Comment {
 }
 
 async fn connect() -> Client {
-  let client = Client::new(&format!("http://127.0.0.1:{PORT}"), None).unwrap();
+  let client = Client::new(&SITE, None).unwrap();
   let _ = client.login("admin@localhost", "secret").await.unwrap();
   return client;
 }
@@ -392,6 +396,31 @@ async fn subscription_test() {
   }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct FileUpload {
+  /// The file's UUID, should be stripped.
+  id: Option<String>,
+
+  /// The file's original filename
+  original_filename: Option<String>,
+
+  /// The file's unique filename.
+  filename: Option<String>,
+
+  /// The file's user-provided content type.
+  content_type: Option<String>,
+
+  /// The file's inferred mime type. Not user provided.
+  mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct FileUploadTable {
+  name: Option<String>,
+  single_file: Option<FileUpload>,
+  multiple_files: Vec<FileUpload>,
+}
+
 async fn file_upload_json_base64_test() {
   let client = connect().await;
   let api = client.records("file_upload_table");
@@ -429,53 +458,83 @@ async fn file_upload_json_base64_test() {
     .unwrap();
 
   // Read the record back to verify file metadata was stored correctly
-  let record: serde_json::Value = api.read(&record_id).await.unwrap();
+  let record: FileUploadTable = api.read(&record_id).await.unwrap();
 
   // Verify single file metadata
-  let single_file = record.get("single_file").unwrap();
-  assert_eq!(single_file.get("filename").unwrap(), "test1.bin");
+  let single_file = record.single_file.as_ref().unwrap();
+  assert_eq!(None, single_file.id);
+  assert_eq!(single_file.original_filename.as_deref(), Some("test1.bin"));
   assert_eq!(
-    single_file.get("content_type").unwrap(),
-    "application/octet-stream"
+    single_file.content_type.as_deref(),
+    Some("application/octet-stream")
   );
 
   // Verify multiple files metadata
-  let multiple_files = record.get("multiple_files").unwrap().as_array().unwrap();
+  let multiple_files = &record.multiple_files;
   assert_eq!(multiple_files.len(), 2);
-  assert_eq!(multiple_files[0].get("filename").unwrap(), "test2.bin");
-  assert_eq!(multiple_files[1].get("filename").unwrap(), "test3.bin");
+  assert_eq!(
+    multiple_files[0].original_filename.as_deref(),
+    Some("test2.bin")
+  );
+  assert_eq!(
+    multiple_files[1].original_filename.as_deref(),
+    Some("test3.bin")
+  );
+
+  let http_client = reqwest::Client::new();
 
   // Test file download endpoints to verify actual file content
-  let http_client = reqwest::Client::new();
-  let single_file_response = http_client
-    .get(&format!(
-      "http://127.0.0.1:{PORT}/api/records/v1/file_upload_table/{record_id}/file/single_file",
-    ))
-    .send()
-    .await
-    .unwrap();
-  let single_file_bytes = single_file_response.bytes().await.unwrap();
-  assert_eq!(single_file_bytes.to_vec(), test_bytes1);
+  let single_file_fname = single_file.filename.as_deref().unwrap();
+  for single_file_url in [
+    format!(
+      "{site}/api/records/v1/file_upload_table/{record_id}/file/single_file",
+      site = *SITE
+    ),
+    format!(
+      "{site}/api/records/v1/file_upload_table/{record_id}/files/single_file/{single_file_fname}",
+      site = *SITE
+    ),
+  ] {
+    let single_file_response = http_client.get(&single_file_url).send().await.unwrap();
+    let single_file_bytes = single_file_response.bytes().await.unwrap();
+    assert_eq!(
+      single_file_bytes.to_vec(),
+      test_bytes1,
+      "{}",
+      String::from_utf8_lossy(&single_file_bytes)
+    );
+  }
 
   let multi_file_1_response = http_client
     .get(&format!(
-      "http://127.0.0.1:{PORT}/api/records/v1/file_upload_table/{record_id}/files/multiple_files/0",
+      "{site}/api/records/v1/file_upload_table/{record_id}/files/multiple_files/{filename}",
+      site = *SITE,
+      filename = multiple_files[0].filename.as_ref().unwrap()
     ))
     .send()
     .await
     .unwrap();
   let multi_file_1_bytes = multi_file_1_response.bytes().await.unwrap();
-  assert_eq!(multi_file_1_bytes.to_vec(), test_bytes2);
+  assert_eq!(multi_file_1_bytes, test_bytes2);
 
   let multi_file_2_response = http_client
     .get(&format!(
-      "http://127.0.0.1:{PORT}/api/records/v1/file_upload_table/{record_id}/files/multiple_files/1",
+      "{site}/api/records/v1/file_upload_table/{record_id}/files/multiple_files/{filename}",
+      site = *SITE,
+      filename = multiple_files[1].filename.as_ref().unwrap(),
     ))
     .send()
     .await
     .unwrap();
+
+  assert!(
+    multi_file_2_response.status().is_success(),
+    "{:?}",
+    multi_file_2_response.text().await
+  );
   let multi_file_2_bytes = multi_file_2_response.bytes().await.unwrap();
-  assert_eq!(multi_file_2_bytes.to_vec(), test_bytes3);
+
+  assert_eq!(multi_file_2_bytes, test_bytes3,);
 
   // Clean up
   api.delete(&record_id).await.unwrap();
@@ -503,7 +562,8 @@ async fn file_upload_multipart_form_test() {
 
   let response: RecordIdResponse = http_client
     .post(&format!(
-      "http://127.0.0.1:{PORT}/api/records/v1/file_upload_table"
+      "{site}/api/records/v1/file_upload_table",
+      site = *SITE
     ))
     .multipart(form)
     .send()
@@ -517,7 +577,8 @@ async fn file_upload_multipart_form_test() {
 
   let single_file_response = http_client
     .get(&format!(
-      "http://127.0.0.1:{PORT}/api/records/v1/file_upload_table/{record_id}/file/single_file",
+      "{site}/api/records/v1/file_upload_table/{record_id}/file/single_file",
+      site = *SITE
     ))
     .send()
     .await

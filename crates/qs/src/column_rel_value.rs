@@ -1,4 +1,5 @@
 use base64::prelude::*;
+use rusqlite::types::Value as SqlValue;
 use serde::de::{Deserializer, Error};
 
 use crate::value::Value;
@@ -57,48 +58,38 @@ pub struct ColumnOpValue {
 }
 
 impl ColumnOpValue {
-  pub fn into_sql(
+  pub fn into_sql<E>(
     self,
     column_prefix: Option<&str>,
+    convert: &dyn Fn(&str, Value) -> Result<SqlValue, E>,
     index: &mut usize,
-  ) -> (String, Option<(String, Value)>) {
+  ) -> Result<(String, Option<(String, SqlValue)>), E> {
+    let v = self.value;
+    let c = self.column;
+
     return match self.op {
       CompareOp::Is => {
-        assert!(matches!(self.value, Value::String(_)), "{:?}", self.value);
+        assert!(matches!(v, Value::String(_)), "{v:?}");
 
-        match column_prefix {
-          Some(p) => (
-            format!(r#"{p}."{c}" IS {v}"#, c = self.column, v = self.value),
-            None,
-          ),
-          None => (
-            format!(r#""{c}" IS {v}"#, c = self.column, v = self.value),
-            None,
-          ),
-        }
+        Ok(match column_prefix {
+          Some(p) => (format!(r#"{p}."{c}" IS {v}"#), None),
+          None => (format!(r#""{c}" IS {v}"#), None),
+        })
       }
       _ => {
         let param = param_name(*index);
         *index += 1;
 
-        match column_prefix {
+        Ok(match column_prefix {
           Some(p) => (
-            format!(
-              r#"{p}."{c}" {o} {param}"#,
-              c = self.column,
-              o = self.op.as_sql()
-            ),
-            Some((param, self.value)),
+            format!(r#"{p}."{c}" {o} {param}"#, o = self.op.as_sql()),
+            Some((param, convert(&c, v)?)),
           ),
           None => (
-            format!(
-              r#""{c}" {o} {param}"#,
-              c = self.column,
-              o = self.op.as_sql()
-            ),
-            Some((param, self.value)),
+            format!(r#""{c}" {o} {param}"#, o = self.op.as_sql()),
+            Some((param, convert(&c, v)?)),
           ),
-        }
+        })
       }
     };
   }
@@ -129,7 +120,7 @@ where
       serde_value::Value::U32(i) => Ok(Value::Integer(i as i64)),
       serde_value::Value::U16(i) => Ok(Value::Integer(i as i64)),
       serde_value::Value::U8(i) => Ok(Value::Integer(i as i64)),
-      serde_value::Value::Bool(b) => Ok(Value::Bool(b)),
+      serde_value::Value::Bool(b) => Ok(Value::Integer(if b { 1 } else { 0 })),
       _ => Err(Error::invalid_type(
         unexpected(&value),
         &"trailbase_qs::Value, i.e. string, integer, double or bool",
@@ -149,7 +140,7 @@ where
   use serde_value::Value;
 
   if !crate::util::sanitize_column_name(&key) {
-    // NOTE: This may trigger if serde_qs parse depth is not enough. In this case, square brakets
+    // NOTE: This may trigger if serde_qs parse depth is not enough. In this case, square brackets
     // will end up in the column name.
     return Err(Error::custom(format!(
       "invalid column name for filter: {key}. Nesting too deep?"
@@ -157,11 +148,13 @@ where
   }
 
   return match value {
+    // The simple ?filter[col]=val case.
     Value::String(_) => Ok(ColumnOpValue {
       column: key,
       op: CompareOp::Equal,
       value: parse_value::<D>(CompareOp::Equal, value)?,
     }),
+    // The operator case ?filter[col][$ne]=val case.
     Value::Map(mut m) if m.len() == 1 => {
       let (k, v) = m.pop_first().expect("len() == 1");
 

@@ -1,7 +1,7 @@
 //! A client library to connect to a TrailBase server via HTTP.
 //!
 //! TrailBase is a sub-millisecond, open-source application server with type-safe APIs, built-in
-//! JS/ES6/TS runtime, realtime, auth, and admin UI built on Rust, SQLite & V8.
+//! WASM runtime, realtime, auth, and admin UI built on Rust, SQLite & Wasmtime.
 
 #![forbid(unsafe_code, clippy::unwrap_used)]
 #![allow(clippy::needless_return)]
@@ -231,8 +231,8 @@ struct JwtTokenClaims {
   csrf_token: String,
 }
 
-fn decode_auth_token<T: DeserializeOwned>(token: &str) -> Result<T, Error> {
-  let decoding_key = jsonwebtoken::DecodingKey::from_secret(&[]);
+fn decode_auth_token<T: DeserializeOwned + Clone>(token: &str) -> Result<T, Error> {
+  let decoding_key = jsonwebtoken::DecodingKey::from_ed_der(&[]);
 
   // Don't validate the token, we don't have the secret key. Just deserialize the claims/contents.
   let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::EdDSA);
@@ -584,11 +584,13 @@ impl TokenState {
     let headers = build_headers(tokens);
     return TokenState {
       state: tokens.and_then(|tokens| {
-        let Ok(jwt_token) = decode_auth_token::<JwtTokenClaims>(&tokens.auth_token) else {
-          error!("Failed to decode auth token.");
-          return None;
+        return match decode_auth_token::<JwtTokenClaims>(&tokens.auth_token) {
+          Ok(jwt_token) => Some((tokens.clone(), jwt_token)),
+          Err(err) => {
+            error!("Failed to decode auth token: {err}");
+            None
+          }
         };
-        return Some((tokens.clone(), jwt_token));
       }),
       headers,
     };

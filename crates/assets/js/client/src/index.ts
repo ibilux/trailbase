@@ -1,4 +1,5 @@
 import { jwtDecode } from "jwt-decode";
+import * as JSON from "@ungap/raw-json";
 
 import type { ChangeEmailRequest } from "@bindings/ChangeEmailRequest";
 import type { LoginRequest } from "@bindings/LoginRequest";
@@ -111,11 +112,9 @@ export class FetchError extends Error {
       body = await response.text();
     } catch {}
 
-    console.debug(response);
-
     return new FetchError(
       response.status,
-      body ? `${response.statusText}: ${body}` : response.statusText,
+      `FetchError(status: ${response.status} - ${response.statusText}, ${body})`,
     );
   }
 
@@ -125,10 +124,6 @@ export class FetchError extends Error {
 
   public isServer(): boolean {
     return this.status >= 500;
-  }
-
-  public toString(): string {
-    return `[${this.status}] ${this.message}`;
   }
 }
 
@@ -238,7 +233,7 @@ export class CreateOperation<T = Record<string, unknown>>
       },
     );
 
-    return (await response.json()).ids[0];
+    return parseJSON(await response.text()).ids[0];
   }
 
   protected toJSON(): CreateOp {
@@ -323,7 +318,7 @@ export class ReadOperation<T = Record<string, unknown>>
         ? `${recordApiBasePath}/${this.apiName}/${this.id}?expand=${expand.join(",")}`
         : `${recordApiBasePath}/${this.apiName}/${this.id}`,
     );
-    return (await response.json()) as T;
+    return parseJSON(await response.text()) as T;
   }
 }
 
@@ -365,41 +360,22 @@ export class ListOperation<T = Record<string, unknown>>
     const expand = this.opts?.expand;
     if (expand) params.append("expand", expand.join(","));
 
-    function traverseFilters(path: string, filter: FilterOrComposite) {
-      if ("and" in filter) {
-        for (const [i, f] of (filter as And).and.entries()) {
-          traverseFilters(`${path}[$and][${i}]`, f);
-        }
-      } else if ("or" in filter) {
-        for (const [i, f] of (filter as Or).or.entries()) {
-          traverseFilters(`${path}[$or][${i}]`, f);
-        }
-      } else {
-        const f = filter as Filter;
-        const op = f.op;
-        if (op) {
-          params.append(
-            `${path}[${f.column}][${formatCompareOp(op)}]`,
-            f.value,
-          );
-        } else {
-          params.append(`${path}[${f.column}]`, f.value);
-        }
-      }
-    }
-
     const filters = this.opts?.filters;
     if (filters) {
       for (const filter of filters) {
-        traverseFilters("filter", filter);
+        addFiltersToParams(params, "filter", filter);
       }
     }
 
     const response = await this.client.fetch(
       `${recordApiBasePath}/${this.apiName}?${params}`,
     );
-    return (await response.json()) as ListResponse<T>;
+    return parseJSON(await response.text()) as ListResponse<T>;
   }
+}
+
+export interface SubscribeOpts {
+  filters?: FilterOrComposite[];
 }
 
 export interface RecordApi<T = Record<string, unknown>> {
@@ -421,6 +397,7 @@ export interface RecordApi<T = Record<string, unknown>> {
   deleteOp(id: RecordId): DeleteOperation;
 
   subscribe(id: RecordId): Promise<ReadableStream<Event>>;
+  subscribeAll(opts?: SubscribeOpts): Promise<ReadableStream<Event>>;
 }
 
 /// Provides CRUD access to records through TrailBase's record API.
@@ -470,7 +447,7 @@ export class RecordApiImpl<T = Record<string, unknown>>
       },
     );
 
-    return (await response.json()).ids;
+    return parseJSON(await response.text()).ids;
   }
 
   public async update(id: RecordId, record: Partial<T>): Promise<void> {
@@ -490,8 +467,31 @@ export class RecordApiImpl<T = Record<string, unknown>>
   }
 
   public async subscribe(id: RecordId): Promise<ReadableStream<Event>> {
+    return await this.subscribeImpl(id);
+  }
+
+  public async subscribeAll(
+    opts?: SubscribeOpts,
+  ): Promise<ReadableStream<Event>> {
+    return await this.subscribeImpl("*", opts);
+  }
+
+  private async subscribeImpl(
+    id: RecordId,
+    opts?: SubscribeOpts,
+  ): Promise<ReadableStream<Event>> {
+    const params = new URLSearchParams();
+    const filters = opts?.filters ?? [];
+    if (filters.length > 0) {
+      for (const filter of filters) {
+        addFiltersToParams(params, "filter", filter);
+      }
+    }
+
     const response = await this.client.fetch(
-      `${recordApiBasePath}/${this.name}/subscribe/${id}`,
+      filters.length > 0
+        ? `${recordApiBasePath}/${this.name}/subscribe/${id}?${params}`
+        : `${recordApiBasePath}/${this.name}/subscribe/${id}`,
     );
     const body = response.body;
     if (!body) {
@@ -651,7 +651,7 @@ class ClientImpl implements Client {
       headers: jsonContentTypeHeader,
     });
 
-    return (await response.json()).ids;
+    return parseJSON(await response.text()).ids;
   }
 
   public avatarUrl(userId?: string): string | undefined {
@@ -864,9 +864,9 @@ export function filesPath(
   apiName: string,
   recordId: RecordId,
   columnName: string,
-  index: number,
+  fileName: string,
 ): string {
-  return `${recordApiBasePath}/${apiName}/${recordId}/files/${columnName}/${index}`;
+  return `${recordApiBasePath}/${apiName}/${recordId}/files/${columnName}/${fileName}`;
 }
 
 function _isDev(): boolean {
@@ -940,9 +940,61 @@ export function asyncBase64Encode(blob: Blob): Promise<string> {
   });
 }
 
+function addFiltersToParams(
+  params: URLSearchParams,
+  path: string,
+  filter: FilterOrComposite,
+) {
+  if ("and" in filter) {
+    for (const [i, f] of (filter as And).and.entries()) {
+      addFiltersToParams(params, `${path}[$and][${i}]`, f);
+    }
+  } else if ("or" in filter) {
+    for (const [i, f] of (filter as Or).or.entries()) {
+      addFiltersToParams(params, `${path}[$or][${i}]`, f);
+    }
+  } else {
+    const f = filter as Filter;
+    const op = f.op;
+    if (op) {
+      params.append(`${path}[${f.column}][${formatCompareOp(op)}]`, f.value);
+    } else {
+      params.append(`${path}[${f.column}]`, f.value);
+    }
+  }
+}
+
 export const exportedForTesting = isDev
   ? {
       base64Decode,
       base64Encode,
     }
   : undefined;
+
+// BigInt JSON stringify/parse shenanigans.
+declare global {
+  interface BigInt {
+    toJSON(): unknown;
+  }
+}
+
+BigInt.prototype.toJSON = function () {
+  return JSON.rawJSON(this.toString());
+};
+
+function parseJSON(text: string) {
+  function reviver(_key: string, value: unknown, context: { source: string }) {
+    if (
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      !Number.isSafeInteger(value)
+    ) {
+      // Ignore the value because it has already lost precision
+      return BigInt(context.source);
+    }
+    return value;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return JSON.parse(text, reviver as any);
+}

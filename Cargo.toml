@@ -24,6 +24,7 @@ members = [
   "examples/wasm-guest-rust",
   "examples/coffee-vector-search/guests/rust",
   "examples/collab-clicker-ssr/guests/rust",
+  "vendor/sqlite-vec/bindings/rust",
 ]
 default-members = [
   "crates/assets",
@@ -77,13 +78,15 @@ env_logger = { version = "^0.11.8", default-features = false, features = ["auto-
 libsqlite3-sys = { version = "0.35.0", default-features = false, features = ["bundled", "preupdate_hook"] }
 minijinja = { version = "2.1.2", default-features = false }
 parking_lot = { version = "0.12.3", default-features = false, features = ["send_guard", "arc_lock"] }
+rand = { version = "^0.9.0" }
 reqwest = { version = "0.12.8", default-features = false, features = ["rustls-tls", "json"] }
 rusqlite = { version = "0.37.0", default-features = false, features = ["bundled", "column_decltype", "functions", "backup", "preupdate_hook"] }
 rust-embed = { version = "8.4.0", default-features = false, features = ["mime-guess"] }
+sqlite-vec = { path = "vendor/sqlite-vec/bindings/rust", default-features = false }
 tokio = { version = "^1.38.0", default-features = false, features = ["macros", "net", "rt-multi-thread", "fs", "signal", "time", "sync"] }
 tracing = { version = "0.1.40", default-features = false }
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["smallvec", "std", "fmt", "json"] }
-trailbase = { path = "crates/core", version = "0.2.0" }
+trailbase = { path = "crates/core", version = "0.2.0", default-features = false, features=["wasm"] }
 trailbase-assets = { path = "crates/assets", version = "0.2.0" }
 trailbase-build = { path = "crates/build", version = "0.1.1" }
 trailbase-client = { path = "crates/client", version = "0.5.0" }
@@ -95,12 +98,12 @@ trailbase-schema = { path = "crates/schema", version = "0.1.0" }
 trailbase-sqlean = { path = "crates/sqlean", version = "0.0.3" }
 trailbase-sqlite = { path = "crates/sqlite", version = "0.3.0" }
 trailbase-wasi-keyvalue = { path = "crates/wasi-keyvalue", version = "0.1.0" }
-trailbase-wasm = { path = "crates/wasm-runtime-guest", version = "0.2.0" }
+trailbase-wasm = { path = "crates/wasm-runtime-guest", version = "0.3.0" }
 trailbase-wasm-common = { path = "crates/wasm-runtime-common", version = "0.1.0" }
 trailbase-wasm-runtime-host = { path = "crates/wasm-runtime-host", version = "0.1.0" }
 ts-rs = { version = "11", features = ["uuid-impl", "serde-json-impl"] }
 uuid = { version = "1", default-features = false, features = ["std", "v4", "v7", "serde"] }
-wasmtime = "37.0.0"
+wasmtime = { version = "37.0.0", features = ["winch"] }
 wasmtime-wasi = { version = "37.0.0", default-features = false, features = [] }
 wasmtime-wasi-http = "37.0.0"
 wasmtime-wasi-io = "37.0.0"

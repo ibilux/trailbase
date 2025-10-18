@@ -3,7 +3,7 @@ name = "trailbase"
 version = "0.2.0"
 edition = "2024"
 license = "OSL-3.0"
-rust-version = "1.86"
+rust-version = "1.88"
 description = "Package to use TrailBase as a framework"
 homepage = "https://trailbase.io"
 repository = "https://github.com/trailbaseio/trailbase"
@@ -16,12 +16,15 @@ exclude = [
 ]
 autobenches = false
 
+[lib]
+doctest = false
+
 [[bench]]
 name = "benchmark"
 harness = false
 
 [features]
-default = ["v8", "wasm"]
+default = ["wasm"]
 v8 = ["dep:trailbase-js"]
 wasm = ["dep:trailbase-wasm-runtime-host"]
 
@@ -47,7 +50,7 @@ hyper-util = "0.1.7"
 indoc = "2.0.5"
 itertools = "0.14.0"
 jsonschema = { version = "0.33.0", default-features = false }
-jsonwebtoken = { version = "^9.3.0", default-features = false, features = ["use_pem"] }
+jsonwebtoken = { version = "^10.0.0", default-features = false, features = ["use_pem", "rust_crypto"] }
 kanal = "0.1.1"
 lazy_static = "1.4.0"
 lettre = { version = "^0.11.7", default-features = false, features = ["tokio1-rustls-tls", "sendmail-transport", "smtp-transport", "builder"] }
@@ -60,7 +63,7 @@ parking_lot = { workspace = true }
 pin-project-lite = "0.2.16"
 prost = { version = "^0.14.1", default-features = false }
 prost-reflect = { version = "^0.16.0", default-features = false, features = ["derive", "text-format"] }
-rand = "^0.9.0"
+rand = { workspace = true }
 reactivate = { version = "0.4.2", features = ["threadsafe"] }
 regex = "1.11.0"
 reqwest = { workspace = true }
@@ -71,7 +74,7 @@ serde_json = "^1.0.117"
 serde_path_to_error = "0.1.16"
 serde_urlencoded = "0.7.1"
 sha2 = "0.10.8"
-sqlformat = "0.4.0"
+sqlformat = "0.5.0"
 sqlite3-parser = "0.15.0"
 thiserror = "2.0.12"
 tokio = { workspace = true }
@@ -97,13 +100,14 @@ url = { version = "^2.4.1", default-features = false }
 utoipa = { version = "5.0.0-beta.0", features = ["axum_extras"] }
 uuid = { workspace = true }
 validator = { version = "0.20.0", default-features = false }
+indexmap = "2.11.4"
 
 [build-dependencies]
 trailbase-build = { workspace = true }
 
 [dev-dependencies]
 anyhow = "^1.0.86"
-axum-test = "17.0.1"
+axum-test = "18.1.0"
 criterion = { version = "0.7", features = ["html_reports", "async_tokio"] }
 env_logger = { workspace = true }
 trailbase-extension = { workspace = true }

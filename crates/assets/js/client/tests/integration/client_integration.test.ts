@@ -17,8 +17,12 @@ type SimpleStrict = {
   id: string;
 
   text_null?: string;
-  text_default?: string;
+  text_default: string;
   text_not_null: string;
+
+  int_null?: bigint;
+  int_default: bigint;
+  int_not_null: bigint;
 
   // Add or generate missing fields.
 };
@@ -42,13 +46,14 @@ async function connect(): Promise<Client> {
 }
 
 // WARN: this test is not hermetic. I requires an appropriate TrailBase instance to be running.
-test("auth integration tests", async () => {
+test("Auth integration tests", async () => {
   const client = await connect();
 
   const oldTokens = client.tokens();
   expect(oldTokens).not.undefined;
 
-  // We need to wait a little to push the expiry time in seconds to avoid just getting the same token minted again.
+  // We need to wait a little to push the expiry time in seconds to avoid just
+  // getting the same token minted again.
   await sleep(1500);
 
   await client.refreshAuthToken();
@@ -72,19 +77,146 @@ test("Record integration tests", async () => {
   const apiName = "simple_strict_table";
   const api = client.records<NewSimpleStrict>(apiName);
 
+  // Milliseconds since epoch.
   const now = new Date().getTime();
-  // Throw in some url characters for good measure.
-  const messages = [
-    `ts client test 1: =?&${now}`,
-    `ts client test 2: =?&${now}`,
-  ];
+  // Throw in some url-unfriendly characters for good measure.
+  const sortedMessages = [
+    `ts client test 1: =?&/`,
+    `ts client test 2: =?&\\`,
+    `ts client test 3: =?&^`,
+  ].sort();
+
+  // Shuffle the messages to make sure list later on is not just ordering by
+  // insertion order.
+  const messages = [...sortedMessages].sort(() => 0.5 - Math.random());
 
   const ids: string[] = [];
   for (const msg of messages) {
-    ids.push((await api.create({ text_not_null: msg })) as string);
+    ids.push(
+      (await api.create({
+        text_not_null: msg,
+        text_default: `prefix ts ${now}`,
+      })) as string,
+    );
+  }
+
+  // Test simple read.
+  const record = await api.read(ids[0]);
+  expect(record.id).toStrictEqual(ids[0]);
+  expect(record.text_not_null).toStrictEqual(messages[0]);
+
+  {
+    // List specific record.
+    const response = await api.list({
+      filters: [
+        {
+          column: "text_not_null",
+          value: messages[0],
+        },
+        {
+          column: "text_default",
+          value: `prefix ts ${now}`,
+        },
+      ],
+    });
+    expect(response.total_count).toBeUndefined();
+    expect(response.cursor).not.undefined.and.not.toBe("");
+    const records = response.records;
+    expect(records.length).toBe(1);
+    expect(records[0].text_not_null).toBe(messages[0]);
   }
 
   {
+    const response = await api.list({
+      filters: [
+        {
+          column: "text_default",
+          op: "like",
+          value: `%ts ${now}`,
+        },
+      ],
+      order: ["+text_not_null"],
+      count: true,
+    });
+
+    expect(response.total_count).toBe(sortedMessages.length);
+    expect(response.records.map((el) => el.text_not_null)).toStrictEqual(
+      sortedMessages,
+    );
+  }
+
+  {
+    const response = await api.list({
+      filters: [
+        {
+          column: "text_default",
+          op: "like",
+          value: `%ts ${now}`,
+        },
+      ],
+      order: ["-text_not_null"],
+    });
+
+    expect(response.total_count).toBeUndefined();
+    expect(
+      response.records.map((el) => el.text_not_null).reverse(),
+    ).toStrictEqual(sortedMessages);
+  }
+
+  // Test 1:1 VIEW-based record API.
+  const view_record: SimpleCompleteView = await client
+    .records<SimpleCompleteView>("simple_complete_view")
+    .read(ids[0]);
+  expect(view_record.id).toStrictEqual(ids[0]);
+  expect(view_record.text_not_null).toStrictEqual(messages[0]);
+
+  // Test view-based record API with column renames.
+  const subset_view_record: SimpleSubsetView = await client
+    .records<SimpleSubsetView>("simple_subset_view")
+    .read(ids[0]);
+  expect(subset_view_record.id).toStrictEqual(ids[0]);
+  expect(subset_view_record.t_not_null).toStrictEqual(messages[0]);
+
+  // Test Record updates.
+  const updated_value: Partial<SimpleStrict> = {
+    text_not_null: "updated not null",
+    text_null: "updated null",
+  };
+  await api.update(ids[1], updated_value);
+
+  const updated_record = await api.read(ids[1]);
+  expect(updated_record).toEqual(
+    expect.objectContaining({
+      id: ids[1],
+      ...updated_value,
+    }),
+  );
+
+  await api.delete(ids[1]);
+
+  await expect(async () => await api.read(ids[1])).rejects.toThrowError(
+    expect.objectContaining({
+      status: status.NOT_FOUND,
+    }),
+  );
+
+  expect(await client.logout()).toBe(true);
+  expect(client.user()).toBe(undefined);
+
+  await expect(async () => await api.read(ids[0])).rejects.toThrowError(
+    expect.objectContaining({
+      status: status.FORBIDDEN,
+    }),
+  );
+});
+
+test("Batch Record Insertion", async () => {
+  const client = await connect();
+  const apiName = "simple_strict_table";
+  const api = client.records<NewSimpleStrict>(apiName);
+
+  {
+    // Test bulk insertion.
     const bulkIds = await api.createBulk([
       { text_not_null: "ts bulk create 0" },
       { text_not_null: "ts bulk create 1" },
@@ -93,6 +225,7 @@ test("Record integration tests", async () => {
   }
 
   {
+    // Test batch/transaction API.
     const op: {
       Create: {
         api_name: string;
@@ -112,99 +245,21 @@ test("Record integration tests", async () => {
     );
     expect(bulkIds.length).toBe(2);
   }
+});
 
-  {
-    const response = await api.list({
-      filters: [
-        {
-          column: "text_not_null",
-          value: messages[0],
-        },
-      ],
-    });
-    expect(response.total_count).toBeUndefined();
-    expect(response.cursor).not.undefined.and.not.toBe("");
-    const records = response.records;
-    expect(records.length).toBe(1);
-    expect(records[0].text_not_null).toBe(messages[0]);
-  }
+test("Large Integers", async () => {
+  const client = await connect();
+  const apiName = "simple_strict_table";
+  const api = client.records<NewSimpleStrict>(apiName);
 
-  {
-    const response = await api.list({
-      filters: [
-        {
-          column: "text_not_null",
-          op: "like",
-          value: `% =?&${now}`,
-        },
-      ],
-      order: ["+text_not_null"],
-      count: true,
-    });
-    expect(response.total_count).toBe(2);
-    expect(response.records.map((el) => el.text_not_null)).toStrictEqual(
-      messages,
-    );
-  }
+  const huge = BigInt("9223372036854775807");
+  expect(huge).toBeGreaterThan(Number.MIN_SAFE_INTEGER);
 
-  {
-    const response = await api.list({
-      filters: [
-        {
-          column: "text_not_null",
-          op: "like",
-          value: `%${now}`,
-        },
-      ],
-      order: ["-text_not_null"],
-    });
-    expect(
-      response.records.map((el) => el.text_not_null).reverse(),
-    ).toStrictEqual(messages);
-  }
+  const id = await api.create({
+    int_not_null: huge,
+  });
 
-  const record = await api.read(ids[0]);
-  expect(record.id).toStrictEqual(ids[0]);
-  expect(record.text_not_null).toStrictEqual(messages[0]);
-
-  // Test 1:1 view-bases record API.
-  const view_record: SimpleCompleteView = await client
-    .records<SimpleCompleteView>("simple_complete_view")
-    .read(ids[0]);
-  expect(view_record.id).toStrictEqual(ids[0]);
-  expect(view_record.text_not_null).toStrictEqual(messages[0]);
-
-  // Test view-based record API with column renames.
-  const subset_view_record: SimpleSubsetView = await client
-    .records<SimpleSubsetView>("simple_subset_view")
-    .read(ids[0]);
-  expect(subset_view_record.id).toStrictEqual(ids[0]);
-  expect(subset_view_record.t_not_null).toStrictEqual(messages[0]);
-
-  const updated_value: Partial<SimpleStrict> = {
-    text_not_null: "updated not null",
-    text_default: "updated default",
-    text_null: "updated null",
-  };
-  await api.update(ids[1], updated_value);
-  const updated_record = await api.read(ids[1]);
-  expect(updated_record).toEqual(
-    expect.objectContaining({
-      id: ids[1],
-      ...updated_value,
-    }),
-  );
-
-  await api.delete(ids[1]);
-
-  expect(await client.logout()).toBe(true);
-  expect(client.user()).toBe(undefined);
-
-  await expect(async () => await api.read(ids[0])).rejects.toThrowError(
-    expect.objectContaining({
-      status: status.FORBIDDEN,
-    }),
-  );
+  expect((await api.read(id)).int_not_null).toEqual(huge);
 });
 
 type Comment = {
@@ -229,7 +284,7 @@ type Comment = {
   };
 };
 
-test("expand foreign records", async () => {
+test("Expand foreign records", async () => {
   const client = await connect();
   const api = client.records<Comment>("comment");
 
@@ -295,7 +350,7 @@ test("expand foreign records", async () => {
   }
 });
 
-test("record error tests", async () => {
+test("API Errors", async () => {
   const client = await connect();
 
   const nonExistantId = urlSafeBase64Encode(
@@ -323,36 +378,7 @@ test("record error tests", async () => {
   );
 });
 
-test("realtime subscribe specific record tests", async () => {
-  const client = await connect();
-  const api = client.records<NewSimpleStrict>("simple_strict_table");
-
-  const now = new Date().getTime();
-  const createMessage = `ts client realtime test 0: =?&${now}`;
-  const id = (await api.create({
-    text_not_null: createMessage,
-  })) as string;
-
-  const eventStream = await api.subscribe(id);
-
-  const updatedMessage = `ts client updated realtime test 0: ${now}`;
-  const updatedValue: Partial<SimpleStrict> = {
-    text_not_null: updatedMessage,
-  };
-  await api.update(id, updatedValue);
-  await api.delete(id);
-
-  const events: Event[] = [];
-  for await (const event of eventStream) {
-    events.push(event);
-  }
-
-  expect(events).toHaveLength(2);
-  expect(events[0]["Update"]["text_not_null"]).equals(updatedMessage);
-  expect(events[1]["Delete"]["text_not_null"]).equals(updatedMessage);
-});
-
-test("transaction tests", async () => {
+test("Record Transactions", async () => {
   const client = await connect();
   const api = client.records<NewSimpleStrict>("simple_strict_table");
   const now = new Date().getTime();
@@ -395,10 +421,39 @@ test("transaction tests", async () => {
   }
 });
 
-test("realtime subscribe table tests", async () => {
+test("Subscribe to Record with specific id", async () => {
   const client = await connect();
   const api = client.records<NewSimpleStrict>("simple_strict_table");
-  const eventStream = await api.subscribe("*");
+
+  const now = new Date().getTime();
+  const createMessage = `ts client realtime test 0: =?&${now}`;
+  const id = (await api.create({
+    text_not_null: createMessage,
+  })) as string;
+
+  const eventStream = await api.subscribe(id);
+
+  const updatedMessage = `ts client updated realtime test 0: ${now}`;
+  const updatedValue: Partial<SimpleStrict> = {
+    text_not_null: updatedMessage,
+  };
+  await api.update(id, updatedValue);
+  await api.delete(id);
+
+  const events: Event[] = [];
+  for await (const event of eventStream) {
+    events.push(event);
+  }
+
+  expect(events).toHaveLength(2);
+  expect(events[0]["Update"]["text_not_null"]).equals(updatedMessage);
+  expect(events[1]["Delete"]["text_not_null"]).equals(updatedMessage);
+});
+
+test("Subscribe to entire table", async () => {
+  const client = await connect();
+  const api = client.records<NewSimpleStrict>("simple_strict_table");
+  const eventStream = await api.subscribeAll();
 
   const now = new Date().getTime();
   const createMessage = `ts client realtime test 0: =?&${now}`;
@@ -428,9 +483,72 @@ test("realtime subscribe table tests", async () => {
   expect(events[2]["Delete"]["text_not_null"]).equals(updatedMessage);
 });
 
-test("file upload base64 tests", async () => {
+test("Subscribe to table with record filters", async () => {
   const client = await connect();
-  const api = client.records("file_upload_table");
+  const api = client.records<NewSimpleStrict>("simple_strict_table");
+
+  const now = new Date().getTime();
+
+  const updatedMessage = `ts client updated realtime test 42: ${now}`;
+  const eventStream = await api.subscribeAll({
+    filters: [
+      {
+        column: "text_not_null",
+        op: "equal",
+        value: updatedMessage,
+      },
+    ],
+  });
+
+  const createMessage = `ts client realtime test 42: =?&${now}`;
+  const id = (await api.create({
+    text_not_null: createMessage,
+  })) as string;
+
+  const updatedValue: Partial<SimpleStrict> = {
+    text_not_null: updatedMessage,
+  };
+  await api.update(id, updatedValue);
+  await api.delete(id);
+
+  const events: Event[] = [];
+  for await (const event of eventStream) {
+    events.push(event);
+
+    if (events.length === 2) {
+      break;
+    }
+  }
+
+  // We should have skipped the creation.
+  expect(events).toHaveLength(2);
+  expect(events[0]["Update"]["text_not_null"]).equals(updatedMessage);
+  expect(events[1]["Delete"]["text_not_null"]).equals(updatedMessage);
+});
+
+type FileUpload = {
+  // Upload
+  name?: string;
+  data?: string;
+
+  // Both.
+  filename: string;
+  content_type?: string;
+
+  // Download
+  original_filename?: string;
+  mime_type?: string;
+};
+
+type FileUploadTable = {
+  name: string | undefined;
+  single_file: FileUpload | undefined;
+  multiple_files: FileUpload[] | undefined;
+};
+
+test("File upload base64", async () => {
+  const client = await connect();
+  const api = client.records<FileUploadTable>("file_upload_table");
 
   const testBytes1 = new Uint8Array([0, 1, 2, 3, 4, 5]);
   const testBytes2 = new Uint8Array([42, 5, 42, 5]);
@@ -464,39 +582,51 @@ test("file upload base64 tests", async () => {
   // Read the record back to verify file metadata was stored correctly
   const record = await api.read(recordId);
 
+  expect(record.single_file).not.toBeUndefined();
+  expect(record.multiple_files).not.toBeUndefined();
+
+  const singleFile = record.single_file!;
+  const multipleFiles = record.multiple_files!;
+
   // Verify single file metadata
-  expect(record.single_file.filename).toBe("test1.bin");
-  expect(record.single_file.content_type).toBe("application/octet-stream");
+  expect(singleFile.original_filename).toBe("test1.bin");
+  expect(singleFile.content_type).toBe("application/octet-stream");
 
   // Verify multiple files metadata
-  expect(record.multiple_files.length).toBe(2);
-  expect(record.multiple_files[0].filename).toBe("test2.bin");
-  expect(record.multiple_files[1].filename).toBe("test3.bin");
+  expect(multipleFiles.length).toBe(2);
+  expect(multipleFiles[0].original_filename).toBe("test2.bin");
+  expect(multipleFiles[0].filename.startsWith("test2"));
+  expect(multipleFiles[0].filename.endsWith(".bin"));
+  expect(multipleFiles[1].original_filename).toBe("test3.bin");
 
   // Test file download endpoints to verify actual file content
   const singleFileResponse = await fetch(
     `http://${ADDRESS}${filePath("file_upload_table", recordId, "single_file")}`,
   );
-  const singleFileBytes = new Uint8Array(
-    await singleFileResponse.arrayBuffer(),
+  expect(new Uint8Array(await singleFileResponse.arrayBuffer())).toEqual(
+    testBytes1,
   );
-  expect(Array.from(singleFileBytes)).toEqual(Array.from(testBytes1));
+
+  const singleFilesResponse = await fetch(
+    `http://${ADDRESS}${filesPath("file_upload_table", recordId, "single_file", singleFile.filename)}`,
+  );
+  expect(new Uint8Array(await singleFilesResponse.arrayBuffer())).toEqual(
+    testBytes1,
+  );
 
   const multiFile1Response = await fetch(
-    `http://${ADDRESS}${filesPath("file_upload_table", recordId, "multiple_files", 0)}`,
+    `http://${ADDRESS}${filesPath("file_upload_table", recordId, "multiple_files", multipleFiles[0].filename)}`,
   );
-  const multiFile1Bytes = new Uint8Array(
-    await multiFile1Response.arrayBuffer(),
+  expect(new Uint8Array(await multiFile1Response.arrayBuffer())).toEqual(
+    testBytes2,
   );
-  expect(Array.from(multiFile1Bytes)).toEqual(Array.from(testBytes2));
 
   const multiFile2Response = await fetch(
-    `http://${ADDRESS}${filesPath("file_upload_table", recordId, "multiple_files", 1)}`,
+    `http://${ADDRESS}${filesPath("file_upload_table", recordId, "multiple_files", multipleFiles[1].filename)}`,
   );
-  const multiFile2Bytes = new Uint8Array(
-    await multiFile2Response.arrayBuffer(),
+  expect(new Uint8Array(await multiFile2Response.arrayBuffer())).toEqual(
+    testBytes3,
   );
-  expect(Array.from(multiFile2Bytes)).toEqual(Array.from(testBytes3));
 
   // Clean up
   await api.delete(recordId);

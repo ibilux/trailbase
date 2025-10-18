@@ -8,8 +8,8 @@
 
 <p align="center">
   An open, <a href="https://trailbase.io/reference/benchmarks/">blazingly fast</a>,
-  single-executable Firebase alternative with type-safe REST & realtime APIs, built-in JS/ES6/TS
-  runtime, SSR, auth and admin UI built on Rust, SQLite & WebAssembly.
+  single-executable Firebase alternative with type-safe REST & realtime APIs, built-in WebAssembly
+  runtime, SSR, auth and admin UI built on Rust, SQLite & Wasmtime.
 <p>
 
 <p align="center">
@@ -82,6 +82,7 @@ Client packages for various languages are available via:
 - [Rust](https://crates.io/crates/trailbase-client)
 - [C#/.Net](https://www.nuget.org/packages/TrailBase/)
 - [Swift](https://github.com/trailbaseio/trailbase/tree/main/client/swift/trailbase)
+- [Kotlin](https://mvnrepository.com/artifact/io.trailbase/trailbase-client)
 - [Go](https://github.com/trailbaseio/trailbase/tree/main/client/go/trailbase)
 - [Python](https://pypi.org/project/trailbase/)
 
@@ -127,8 +128,18 @@ trail run
 
 On first start, a `./traildepot` folder will be bootstrapped, an admin user
 created and their credentials printed to the terminal.
-Afterwards open http://localhost:4000/_/admin/ in your browser and use the
-credentials to log into the admin dashboard.
+Afterwards open [http://localhost:4000/\_/admin/](http://localhost:4000/_/admin/)
+in your browser and use the credentials to log into the admin dashboard.
+
+If you want to install the auth UI, you can simply run:
+
+```sh
+trail components add trailbase/auth_ui
+```
+
+, which will add a WASM component in `./traildepot/wasm` exposing additional UI
+endpoints, e.g.
+[http://localhost:4000/\_/auth/login](http://localhost:4000/_/auth/login).
 
 ## Building
 

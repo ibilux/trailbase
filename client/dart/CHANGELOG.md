@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.1
+
+- Minor: fix changelog.
+
+## 0.7.0
+
+- Make realtime `Events` pattern matchable.
+- Cache/share subscriptions using broadcast streams.
+
+## 0.6.0
+
+- Overhaul and squash abstractions.
+- Typed exceptions.
+- Fix `imageUrl`.
+
+## 0.5.0
+
+- Support realtime subscriptions with record-based filters. Requires TB ^0.18.1.
+- Switch from `dio` to `http`.
+
 ## 0.4.0
 
 - More powerful, nested list filters intrdocued with TrailBase v0.12.0.

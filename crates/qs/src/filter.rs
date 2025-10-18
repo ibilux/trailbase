@@ -7,6 +7,7 @@
 /// filters[column][eq]=value
 /// filters[and][0][column0][eq]=value0&filters[and][1][column1][eq]=value1
 /// filters[and][0][or][0][column0]=value0&[and][0][or][1][column1]=value1
+use rusqlite::types::Value as SqlValue;
 use std::collections::BTreeMap;
 
 use crate::column_rel_value::{ColumnOpValue, serde_value_to_single_column_rel_value};
@@ -28,33 +29,31 @@ impl ValueOrComposite {
   pub fn into_sql<E>(
     self,
     column_prefix: Option<&str>,
-    validator: &dyn Fn(&str) -> Result<(), E>,
-  ) -> Result<(String, Vec<(String, Value)>), E> {
+    convert: &dyn Fn(&str, Value) -> Result<SqlValue, E>,
+  ) -> Result<(String, Vec<(String, SqlValue)>), E> {
     let mut index: usize = 0;
-    return self.into_sql_impl(column_prefix, validator, &mut index);
+    return self.into_sql_impl(column_prefix, convert, &mut index);
   }
 
   fn into_sql_impl<E>(
     self,
     column_prefix: Option<&str>,
-    validator: &dyn Fn(&str) -> Result<(), E>,
+    convert: &dyn Fn(&str, Value) -> Result<SqlValue, E>,
     index: &mut usize,
-  ) -> Result<(String, Vec<(String, Value)>), E> {
+  ) -> Result<(String, Vec<(String, SqlValue)>), E> {
     match self {
       Self::Value(v) => {
-        validator(&v.column)?;
-
-        return Ok(match v.into_sql(column_prefix, index) {
+        return Ok(match v.into_sql(column_prefix, convert, index)? {
           (sql, Some(param)) => (sql, vec![param]),
           (sql, None) => (sql, vec![]),
         });
       }
       Self::Composite(combiner, vec) => {
         let mut fragments = Vec::<String>::with_capacity(vec.len());
-        let mut params = Vec::<(String, Value)>::with_capacity(vec.len());
+        let mut params = Vec::<(String, SqlValue)>::with_capacity(vec.len());
 
         for value_or_composite in vec {
-          let (f, p) = value_or_composite.into_sql_impl::<E>(column_prefix, validator, index)?;
+          let (f, p) = value_or_composite.into_sql_impl::<E>(column_prefix, convert, index)?;
           fragments.push(f);
           params.extend(p);
         }
@@ -95,70 +94,76 @@ where
     ));
   };
 
-  if m.is_empty() {
-    // We could also error here, but this allows empty query-string.
-    return Ok(ValueOrComposite::Composite(Combiner::And, vec![]));
-  } else if m.len() > 1 {
-    // Multiple entries on the same same level => Implicit AND composite
-    let vec = m
-      .into_iter()
-      .map(|(k, v)| {
-        return match k {
-          Value::String(key) => match key.as_str() {
-            "$and" | "$or" => serde_value_to_value_or_composite::<D>(
-              Value::Map(BTreeMap::from([(Value::String(key), v)])),
-              depth + 1,
-            ),
-            _ => Ok(ValueOrComposite::Value(
-              serde_value_to_single_column_rel_value::<D>(key, v)?,
-            )),
-          },
-          _ => Err(Error::invalid_type(
-            crate::util::unexpected(&k),
-            &"string key",
-          )),
-        };
-      })
-      .collect::<Result<Vec<_>, _>>()?;
-
-    return Ok(ValueOrComposite::Composite(Combiner::And, vec));
-  }
-
-  let combine = |combiner: Combiner, values: Value| -> Result<ValueOrComposite, D::Error> {
-    match values {
-      Value::Seq(vec) => {
-        if vec.len() < 2 {
-          return Err(serde::de::Error::invalid_length(
-            vec.len(),
-            &"Sequence with 2 or more elements",
-          ));
-        }
-
-        return Ok(ValueOrComposite::Composite(
-          combiner,
-          vec
-            .into_iter()
-            .map(|v| serde_value_to_value_or_composite::<D>(v, depth + 1))
-            .collect::<Result<Vec<_>, _>>()?,
+  return match m.len() {
+    0 => Ok(ValueOrComposite::Composite(Combiner::And, vec![])),
+    1 => {
+      let first = m.pop_first().expect("len == 1");
+      let (Value::String(key), v) = first else {
+        return Err(Error::invalid_type(
+          crate::util::unexpected(&first.0),
+          &"String",
         ));
-      }
-      v => Err(Error::invalid_type(
-        crate::util::unexpected(&v),
-        &"Sequence",
-      )),
-    }
-  };
+      };
 
-  match m.pop_first().expect("len == 1") {
-    (Value::String(str), v) => match str.as_str() {
-      "$and" => combine(Combiner::And, v),
-      "$or" => combine(Combiner::Or, v),
-      _ => Ok(ValueOrComposite::Value(
-        serde_value_to_single_column_rel_value::<D>(str, v)?,
-      )),
-    },
-    (k, _) => Err(Error::invalid_type(crate::util::unexpected(&k), &"String")),
-  }
+      match (key.as_str(), v) {
+        // Recursive cases.
+        ("$and", Value::Seq(values)) => combine::<D>(Combiner::And, values, depth),
+        ("$and", v) => Err(Error::invalid_type(
+          crate::util::unexpected(&v),
+          &"sequence",
+        )),
+        ("$or", Value::Seq(values)) => combine::<D>(Combiner::Or, values, depth),
+        ("$or", v) => Err(Error::invalid_type(
+          crate::util::unexpected(&v),
+          &"sequence",
+        )),
+        // Single column_name but multiple values, i.e. multiple filters on the same col.
+        (col_name, Value::Map(m)) if m.len() > 1 => Ok(ValueOrComposite::Composite(
+          Combiner::And,
+          m.into_iter()
+            .map(|(key, value)| {
+              return Ok(ValueOrComposite::Value(
+                serde_value_to_single_column_rel_value::<D>(
+                  col_name.to_string(),
+                  Value::Map(BTreeMap::from([(key, value)])),
+                )?,
+              ));
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        )),
+        // For any other string-type key, turn into a single value.
+        (_key, v) => Ok(ValueOrComposite::Value(
+          serde_value_to_single_column_rel_value::<D>(key, v)?,
+        )),
+      }
+    }
+    // Multiple different keys on the same same level, i.e. no explicit grouping by a single key
+    // like "$and" or "$or" => Implicit AND composite.
+    _n => combine::<D>(
+      Combiner::And,
+      m.into_iter()
+        .map(|(k, v)| Value::Map(BTreeMap::from([(k, v)]))),
+      depth,
+    ),
+  };
+}
+
+/// Recursively combine nested filter expressions.
+fn combine<'de, D>(
+  combiner: Combiner,
+  values: impl IntoIterator<Item = serde_value::Value>,
+  depth: usize,
+) -> Result<ValueOrComposite, D::Error>
+where
+  D: serde::de::Deserializer<'de>,
+{
+  return Ok(ValueOrComposite::Composite(
+    combiner,
+    values
+      .into_iter()
+      .map(|v| serde_value_to_value_or_composite::<D>(v, depth + 1))
+      .collect::<Result<Vec<_>, _>>()?,
+  ));
 }
 
 impl<'de> serde::de::Deserialize<'de> for ValueOrComposite {
@@ -195,8 +200,18 @@ mod tests {
     let m_empty: Query = qs.deserialize_str("").unwrap();
     assert_eq!(m_empty.filter, None);
 
-    let m0: Result<Query, _> = qs.deserialize_str("filter[$and][0][col0]=val0");
-    assert!(m0.is_err(), "{m0:?}");
+    let m0: Query = qs.deserialize_str("filter[$and][0][col0]=val0").unwrap();
+    assert_eq!(
+      m0.filter.unwrap(),
+      ValueOrComposite::Composite(
+        Combiner::And,
+        vec![ValueOrComposite::Value(ColumnOpValue {
+          column: "col0".to_string(),
+          op: CompareOp::Equal,
+          value: Value::String("val0".to_string()),
+        })]
+      ),
+    );
 
     let m1: Query = qs
       .deserialize_str("filter[$and][0][col0]=val0&filter[$and][1][col1]=val1")
@@ -230,10 +245,8 @@ mod tests {
       })
     );
 
-    assert!(
-      qs.deserialize_str::<Query>("filter[$and][0][col0]=val0&filter[$or][1][col1]=val1",)
-        .is_err()
-    );
+    let m = qs.deserialize_str::<Query>("filter[$and][0][col0]=val0&filter[$or][1][col1]=val1");
+    assert!(m.is_ok(), "M: {m:?}");
 
     let m2: Query = qs
       .deserialize_str("filter[col0]=val0&filter[col1]=val1")
@@ -256,15 +269,6 @@ mod tests {
         ]
       )
     );
-
-    // Too few elements
-    let m4: Result<Query, _> = qs.deserialize_str("filter[$and][0][col0]=val0");
-    assert!(m4.is_err(), "{m4:?}");
-
-    // Too few elements
-    let m3: Result<Query, _> =
-      qs.deserialize_str("filter[col0]=val0&filter[$and][0][col0]=val0&filter[col1]=val1");
-    assert!(m3.is_err(), "{m3:?}");
   }
 
   #[test]
@@ -275,16 +279,20 @@ mod tests {
       value: Value::String("val0".to_string()),
     });
 
-    let validator = |_: &str| -> Result<(), String> {
-      return Ok(());
+    let convert = |_: &str, value: Value| -> Result<SqlValue, String> {
+      return Ok(match value {
+        Value::String(s) => SqlValue::Text(s),
+        Value::Integer(i) => SqlValue::Integer(i),
+        Value::Double(d) => SqlValue::Real(d),
+      });
     };
     let sql0 = v0
       .clone()
-      .into_sql(/* column_prefix= */ None, &validator)
+      .into_sql(/* column_prefix= */ None, &convert)
       .unwrap();
     assert_eq!(sql0.0, r#""col0" = :__p0"#);
     let sql0 = v0
-      .into_sql(/* column_prefix= */ Some("p"), &validator)
+      .into_sql(/* column_prefix= */ Some("p"), &convert)
       .unwrap();
     assert_eq!(sql0.0, r#"p."col0" = :__p0"#);
 
@@ -293,7 +301,7 @@ mod tests {
       op: CompareOp::Is,
       value: Value::String("NULL".to_string()),
     });
-    let sql1 = v1.into_sql(None, &validator).unwrap();
+    let sql1 = v1.into_sql(None, &convert).unwrap();
     assert_eq!(sql1.0, r#""col0" IS NULL"#, "{sql1:?}",);
   }
 }

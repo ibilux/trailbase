@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:trailbase/trailbase.dart';
 import 'package:test/test.dart';
-import 'package:dio/dio.dart';
+import 'package:http/http.dart' as http;
 
 const port = 4006;
 const address = '127.0.0.1:${port}';
@@ -177,11 +179,10 @@ Future<Process> initTrailBase() async {
     '--runtime-threads=2',
   ]);
 
-  final dio = Dio();
+  final uri = Uri.parse('http://${address}/api/healthcheck');
   for (int i = 0; i < 100; ++i) {
     try {
-      final response = await dio
-          .fetch(RequestOptions(path: 'http://${address}/api/healthcheck'));
+      final response = await http.get(uri);
       if (response.statusCode == 200) {
         return process;
       }
@@ -205,6 +206,15 @@ Future<Process> initTrailBase() async {
   throw Exception('Cargo run failed: ${exitCode}.');
 }
 
+Future<List<Event>> take(Stream<Event> stream, int n) {
+  const timeout = Duration(seconds: 10);
+
+  return stream.take(n).timeout(timeout, onTimeout: (EventSink<Event> sink) {
+    sink.close();
+    throw Exception('Failed to take ${n} events from stream');
+  }).toList();
+}
+
 Future<void> main() async {
   if (!Directory.current.path.endsWith('dart')) {
     throw Exception('Unexpected working directory');
@@ -220,13 +230,26 @@ Future<void> main() async {
     // await process.stdout.forEach(stdout.add);
   });
 
+  test('filter', () {
+    final params = <String, String>{};
+    final filters = [
+      Filter(column: 'col0', value: '0', op: CompareOp.greaterThan),
+      Filter(column: 'col0', value: '5', op: CompareOp.lessThan),
+    ];
+
+    for (final filter in filters) {
+      addFiltersToParams(params, 'filter', filter);
+    }
+
+    expect(params.length, 2);
+  });
+
   group('client tests', () {
     test('auth', () async {
       final client = await connect();
 
       final oldTokens = client.tokens();
       expect(oldTokens, isNotNull);
-      expect(oldTokens!.valid, isTrue);
 
       final user = client.user()!;
       expect(user.id, isNot(equals('')));
@@ -240,7 +263,6 @@ Future<void> main() async {
 
       final newTokens = await client.login('admin@localhost', 'secret');
       expect(newTokens, isNotNull);
-      expect(newTokens.valid, isTrue);
 
       expect(newTokens, isNot(equals(oldTokens)));
 
@@ -253,10 +275,16 @@ Future<void> main() async {
       final api = client.records('simple_strict_table');
 
       final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final messages = [
+      final sortedMessages = [
         'dart client test 0: =?&${now}',
         'dart client test 1: =?&${now}',
+        'dart client test 2: =?&${now}',
       ];
+      // NOTE: we're randomizing the lexicographical order of the messages to
+      // make sure we're not just sorting by insertion order later on in the
+      // test.
+      final messages = [...sortedMessages]..shuffle(Random());
+
       final ids = [];
       for (final msg in messages) {
         ids.add(await api.create({'text_not_null': msg}));
@@ -291,7 +319,7 @@ Future<void> main() async {
         ))
             .records;
         expect(recordsAsc.map((el) => el['text_not_null']),
-            orderedEquals(messages));
+            orderedEquals(sortedMessages));
 
         final recordsDesc = (await api.list(
           order: ['-text_not_null'],
@@ -302,7 +330,7 @@ Future<void> main() async {
         ))
             .records;
         expect(recordsDesc.map((el) => el['text_not_null']).toList().reversed,
-            orderedEquals(messages));
+            orderedEquals(sortedMessages));
       }
 
       {
@@ -316,7 +344,8 @@ Future<void> main() async {
           count: true,
         ));
 
-        expect(response.totalCount ?? -1, 2);
+        expect(response.totalCount ?? -1, 3);
+        expect(response.records[0]['text_not_null'], sortedMessages.last);
         // Ensure there's no extra field, i.e the count doesn't get serialized.
         expect(response.records[0].keys.length, 13);
       }
@@ -392,7 +421,7 @@ Future<void> main() async {
       }
     });
 
-    test('realtime', () async {
+    test('realtime table and record subscriptions', () async {
       final client = await connect();
       final api = client.records('simple_strict_table');
 
@@ -403,48 +432,110 @@ Future<void> main() async {
       final id = await api.create({'text_not_null': createMessage});
 
       final events = await api.subscribe(id);
+      {
+        // Should not trigger new subscriptions but rather join in the cached broadcast.
+        final _ = await api.subscribe(id);
+      }
 
       final updatedMessage = 'dart client updated realtime test 0: ${now}';
       await api.update(id, {'text_not_null': updatedMessage});
       await api.delete(id);
 
-      final eventList =
-          await events.timeout(Duration(seconds: 10), onTimeout: (sink) {
-        print('Stream timeout');
-        sink.close();
-      }).toList();
+      expect(client.cache.length, equals(2));
+
+      final eventList = await take(events, 2);
 
       expect(eventList.length, equals(2));
       expect(eventList[0].runtimeType, equals(UpdateEvent));
       expect(
-          SimpleStrict.fromJson(eventList[0].value()!),
+          SimpleStrict.fromJson(eventList[0].value!),
           SimpleStrict(
             id: id.toString(),
             textNotNull: updatedMessage,
           ));
+
+      {
+        await Future.delayed(const Duration());
+        expect(client.cache.length, equals(1), reason: '${client.cache}');
+      }
 
       expect(eventList[1].runtimeType, equals(DeleteEvent));
       expect(
-          SimpleStrict.fromJson(eventList[1].value()!),
+          SimpleStrict.fromJson(eventList[1].value!),
           SimpleStrict(
             id: id.toString(),
             textNotNull: updatedMessage,
           ));
 
-      final tableEventList =
-          await tableEvents.timeout(Duration(seconds: 10), onTimeout: (sink) {
-        print('Stream timeout');
-        sink.close();
-      }).toList();
+      final tableEventList = await take(tableEvents, 3);
       expect(tableEventList.length, equals(3));
 
       expect(tableEventList[0].runtimeType, equals(InsertEvent));
       expect(
-          SimpleStrict.fromJson(tableEventList[0].value()!),
+          SimpleStrict.fromJson(tableEventList[0].value!),
           SimpleStrict(
             id: id.toString(),
             textNotNull: createMessage,
           ));
+
+      {
+        await Future.delayed(const Duration());
+        expect(client.cache.length, equals(0), reason: '${client.cache}');
+      }
+    });
+
+    test('subscription filter', () async {
+      final client = await connect();
+      final api = client.records('simple_strict_table');
+
+      final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final updatedMessage = 'dart client updated realtime test 42: ${now}';
+
+      final tableEvents0 = await api.subscribeAll(
+          filters: [Filter(column: 'text_not_null', value: updatedMessage)]);
+
+      // Test that filter-values are parsed correctly to column type.
+      final tableEvents1 = await api.subscribeAll(filters: [
+        Filter(column: 'text_not_null', op: CompareOp.greaterThan, value: '0')
+      ]);
+
+      final createMessage = 'dart client realtime test 42: =?&${now}';
+      final id = await api.create({'text_not_null': createMessage});
+
+      await api.update(id, {'text_not_null': updatedMessage});
+      await api.delete(id);
+
+      {
+        final eventList = await take(tableEvents0, 2);
+
+        expect(eventList.length, equals(2));
+        expect(eventList[0].runtimeType, equals(UpdateEvent));
+        expect(
+            SimpleStrict.fromJson(eventList[0].value!),
+            SimpleStrict(
+              id: id.toString(),
+              textNotNull: updatedMessage,
+            ));
+
+        // Demonstrate pattern-mathching/destructuring.
+        if (eventList[1] case DeleteEvent(value: final v)) {
+          expect(
+              SimpleStrict.fromJson(v),
+              SimpleStrict(
+                id: id.toString(),
+                textNotNull: updatedMessage,
+              ));
+        } else {
+          throw ArgumentError.value(
+              'expected DeleteEvent, got ${eventList[1]}');
+        }
+      }
+
+      {
+        final eventList = await take(tableEvents1, 3);
+        expect(eventList.length, equals(3));
+        expect(eventList[0].runtimeType, equals(InsertEvent));
+      }
     });
   });
 }

@@ -42,7 +42,7 @@ import {
 } from "@/components/ui/tooltip";
 
 import { createConfigQuery, invalidateConfig } from "@/lib/config";
-import { type FormRow, RowData } from "@/lib/convert";
+import type { FormRow, RowData } from "@/lib/convert";
 import { adminFetch } from "@/lib/fetch";
 import { urlSafeBase64ToUuid } from "@/lib/utils";
 import { dropTable, dropIndex } from "@/lib/table";
@@ -66,11 +66,12 @@ import {
 import type { Column } from "@bindings/Column";
 import type { ListRowsResponse } from "@bindings/ListRowsResponse";
 import type { ListSchemasResponse } from "@bindings/ListSchemasResponse";
+import type { QualifiedName } from "@bindings/QualifiedName";
+import type { ReadFilesQuery } from "@bindings/ReadFilesQuery";
 import type { Table } from "@bindings/Table";
 import type { TableIndex } from "@bindings/TableIndex";
 import type { TableTrigger } from "@bindings/TableTrigger";
 import type { View } from "@bindings/View";
-import { QualifiedName } from "@bindings/QualifiedName";
 
 export type SimpleSignal<T> = [get: () => T, set: (state: T) => void];
 
@@ -109,64 +110,73 @@ function renderCell(
     return "NULL";
   }
 
-  if (typeof value === "string") {
-    if (cell.isUUID) {
-      return urlSafeBase64ToUuid(value);
-    }
-
-    const imageMime = (f: FileUpload) => {
-      const mime = f.mime_type;
-      return mime === "image/jpeg" || mime === "image/png";
-    };
-
-    if (cell.isFile) {
-      const fileUpload = JSON.parse(value) as FileUpload;
-      if (imageMime(fileUpload)) {
-        const pkCol = columns[pkIndex].name;
-        const pkVal = context.row.original[pkIndex] as string;
-        const url = imageUrl({
-          tableName,
-          pkCol,
-          pkVal,
-          fileColName: cell.col.name,
-        });
-
-        return <Image url={url} mime={fileUpload.mime_type} />;
+  switch (typeof value) {
+    case "bigint":
+      return value.toString();
+    case "string": {
+      if (cell.isUUID) {
+        return urlSafeBase64ToUuid(value);
       }
-    } else if (cell.isFiles) {
-      const fileUploads = JSON.parse(value) as FileUploads;
 
-      const indexes: number[] = [];
-      for (let i = 0; i < fileUploads.length; ++i) {
-        const file = fileUploads[i];
-        if (imageMime(file)) {
-          indexes.push(i);
+      const imageMime = (f: FileUpload) => {
+        const mime = f.mime_type;
+        return mime === "image/jpeg" || mime === "image/png";
+      };
+
+      if (cell.isFile) {
+        const fileUpload = JSON.parse(value) as FileUpload;
+        if (imageMime(fileUpload)) {
+          const pkCol = columns[pkIndex].name;
+          const pkVal = context.row.original[pkIndex] as string;
+          const url = imageUrl({
+            tableName,
+            query: {
+              pk_column: pkCol,
+              pk_value: pkVal,
+              file_column_name: cell.col.name,
+              file_name: null,
+            },
+          });
+
+          return <Image url={url} mime={fileUpload.mime_type} />;
+        }
+      } else if (cell.isFiles) {
+        const fileUploads = JSON.parse(value) as FileUploads;
+
+        const indexes: number[] = [];
+        for (let i = 0; i < fileUploads.length; ++i) {
+          const file = fileUploads[i];
+          if (imageMime(file)) {
+            indexes.push(i);
+          }
+
+          if (indexes.length >= 3) break;
         }
 
-        if (indexes.length >= 3) break;
-      }
+        if (indexes.length > 0) {
+          const pkCol = columns[pkIndex].name;
+          const pkVal = context.row.original[pkIndex] as string;
+          return (
+            <div class="flex gap-2">
+              <For each={indexes}>
+                {(index: number) => {
+                  const fileUpload = fileUploads[index];
+                  const url = imageUrl({
+                    tableName,
+                    query: {
+                      pk_column: pkCol,
+                      pk_value: pkVal,
+                      file_column_name: cell.col.name,
+                      file_name: fileUpload.filename ?? null,
+                    },
+                  });
 
-      if (indexes.length > 0) {
-        const pkCol = columns[pkIndex].name;
-        const pkVal = context.row.original[pkIndex] as string;
-        return (
-          <div class="flex gap-2">
-            <For each={indexes}>
-              {(index: number) => {
-                const fileUpload = fileUploads[index];
-                const url = imageUrl({
-                  tableName,
-                  pkCol,
-                  pkVal,
-                  fileColName: cell.col.name,
-                  index,
-                });
-
-                return <Image url={url} mime={fileUpload.mime_type} />;
-              }}
-            </For>
-          </div>
-        );
+                  return <Image url={url} mime={fileUpload.mime_type} />;
+                }}
+              </For>
+            </div>
+          );
+        }
       }
     }
   }
@@ -198,18 +208,28 @@ function Image(props: { url: string; mime: string }) {
 
 function imageUrl(opts: {
   tableName: QualifiedName;
-  pkCol: string;
-  pkVal: string;
-  fileColName: string;
-  index?: number;
+  query: ReadFilesQuery;
 }): string {
   const tableName: string = prettyFormatQualifiedName(opts.tableName);
-  const uri = `/table/${tableName}/files?pk_column=${opts.pkCol}&pk_value=${opts.pkVal}&file_column_name=${opts.fileColName}`;
-  const index = opts.index;
-  if (index) {
-    return `${uri}&file_index=${index}`;
+  const query = opts.query;
+
+  if (query.file_name) {
+    const params = new URLSearchParams({
+      pk_column: query.pk_column,
+      pk_value: `${query.pk_value}`,
+      file_column_name: query.file_column_name,
+      file_name: query.file_name,
+    });
+
+    return `/table/${tableName}/files?${params}`;
   }
-  return uri;
+
+  const params = new URLSearchParams({
+    pk_column: query.pk_column,
+    pk_value: `${query.pk_value}`,
+    file_column_name: query.file_column_name,
+  });
+  return `/table/${tableName}/files?${params}`;
 }
 
 function tableOrViewSatisfiesRecordApiRequirements(

@@ -4,8 +4,8 @@ use axum::{
   response::Response,
 };
 use serde::Deserialize;
+use trailbase_schema::FileUploads;
 
-use crate::app_state::AppState;
 use crate::auth::user::User;
 use crate::records::expand::expand_tables;
 use crate::records::expand::row_to_json_expand;
@@ -15,6 +15,7 @@ use crate::records::read_queries::{
   run_select_query,
 };
 use crate::records::{Permission, RecordError};
+use crate::{app_state::AppState, records::params::SchemaAccessor};
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ReadRecordQuery {
@@ -149,6 +150,9 @@ type GetUploadedFileFromRecordPath = Path<(
 )>;
 
 /// Read file associated with record.
+///
+/// You may prefer using the more general "files" (plural) handler below. Since using unique
+/// filenames does help with the content lifecycle, such as caching.
 #[utoipa::path(
   get,
   path = "/{name}/{record}/file/{column_name}",
@@ -204,14 +208,16 @@ pub async fn get_uploaded_file_from_record_handler(
 type GetUploadedFilesFromRecordPath = Path<(
   String, // RecordApi name
   String, // Record id
-  String, // Column name,
-  usize,  // Index
+  String, // Column name
+  // NOTE: We may want to remove index-based access in the future. A stable, unique identifier
+  // makes a lot more sense in the context of mutations, caching, ... .
+  String, // Filename
 )>;
 
 /// Read single file from list associated with record.
 #[utoipa::path(
   get,
-  path = "/{name}/{record}/files/{column_name}/{file_index}",
+  path = "/{name}/{record}/files/{column_name}/{file_name}",
   tag = "records",
   responses(
     (status = 200, description = "File contents.")
@@ -219,7 +225,7 @@ type GetUploadedFilesFromRecordPath = Path<(
 )]
 pub async fn get_uploaded_files_from_record_handler(
   State(state): State<AppState>,
-  Path((api_name, record, column_name, file_index)): GetUploadedFilesFromRecordPath,
+  Path((api_name, record, column_name, file_name)): GetUploadedFilesFromRecordPath,
   user: Option<User>,
 ) -> Result<Response, RecordError> {
   let Some(api) = state.lookup_record_api(&api_name) else {
@@ -227,40 +233,31 @@ pub async fn get_uploaded_files_from_record_handler(
   };
 
   let record_id = api.primary_key_to_value(record)?;
-
-  let Ok(()) = api
+  api
     .check_record_level_access(Permission::Read, Some(&record_id), None, user.as_ref())
-    .await
-  else {
-    return Err(RecordError::Forbidden);
-  };
+    .await?;
 
-  let (_index, pk_column) = api.record_pk_column();
-  let Some(index) = api.column_index_by_name(&column_name) else {
+  let Some((_index, column, Some(column_json_metadata))) = api.column_by_name(&column_name) else {
     return Err(RecordError::BadRequest("Invalid field/column name"));
   };
 
-  let column = &api.columns()[index];
-  let Some(ref column_json_metadata) = api.json_column_metadata()[index] else {
-    return Err(RecordError::BadRequest("Invalid column"));
-  };
-
-  let mut file_uploads = run_get_files_query(
+  let FileUploads(file_uploads) = run_get_files_query(
     &state,
     api.table_name(),
     column,
     column_json_metadata,
-    &pk_column.name,
+    &api.record_pk_column().1.name,
     record_id,
   )
   .await
   .map_err(|err| RecordError::Internal(err.into()))?;
 
-  if file_index >= file_uploads.0.len() {
-    return Err(RecordError::RecordNotFound);
-  }
+  let file_upload = file_uploads
+    .into_iter()
+    .find(|f| f.filename() == file_name)
+    .ok_or_else(|| RecordError::RecordNotFound)?;
 
-  return read_file_into_response(&state, file_uploads.0.remove(file_index))
+  return read_file_into_response(&state, file_upload)
     .await
     .map_err(|err| RecordError::Internal(err.into()));
 }
@@ -729,7 +726,7 @@ mod test {
         assert_eq!(f.original_filename(), Some(format!("bar{index}").as_str()));
         assert_eq!(f.content_type(), Some(format!("baz{index}").as_str()));
 
-        let file_path = object_store::path::Path::from(f.path());
+        let file_path = object_store::path::Path::from(f.objectstore_id());
         assert_eq!(
           *expected,
           read_objectstore_file(state.objectstore(), &file_path).await
@@ -764,34 +761,43 @@ mod test {
 
       return vec![
         assert_file(&state, 0, &bytes0, &file, async || {
-          let api_path = Path((API_NAME.to_string(), record_id.clone(), "file".to_string()));
-          return get_uploaded_file_from_record_handler(State(state.clone()), api_path, None)
-            .await
-            .unwrap();
+          return get_uploaded_file_from_record_handler(
+            State(state.clone()),
+            Path((API_NAME.to_string(), record_id.clone(), "file".to_string())),
+            None,
+          )
+          .await
+          .unwrap();
         })
         .await,
         assert_file(&state, 1, &bytes1, &files[0], async || {
-          let api_path = Path((
-            API_NAME.to_string(),
-            record_id.clone(),
-            "files".to_string(),
-            0,
-          ));
-          return get_uploaded_files_from_record_handler(State(state.clone()), api_path, None)
-            .await
-            .unwrap();
+          return get_uploaded_files_from_record_handler(
+            State(state.clone()),
+            Path((
+              API_NAME.to_string(),
+              record_id.clone(),
+              "files".to_string(),
+              files[0].filename().to_string(),
+            )),
+            None,
+          )
+          .await
+          .unwrap();
         })
         .await,
         assert_file(&state, 2, &bytes2, &files[1], async || {
-          let api_path = Path((
-            API_NAME.to_string(),
-            record_id.clone(),
-            "files".to_string(),
-            1,
-          ));
-          return get_uploaded_files_from_record_handler(State(state.clone()), api_path, None)
-            .await
-            .unwrap();
+          return get_uploaded_files_from_record_handler(
+            State(state.clone()),
+            Path((
+              API_NAME.to_string(),
+              record_id.clone(),
+              "files".to_string(),
+              files[1].filename().to_string(),
+            )),
+            None,
+          )
+          .await
+          .unwrap();
         })
         .await,
       ];

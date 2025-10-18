@@ -2,7 +2,7 @@
   "name": "trailbase",
   "description": "Official TrailBase Client",
   "homepage": "https://trailbase.io",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "license": "OSL-3.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -35,8 +35,8 @@
     "test": "vitest run && vite-node tests/integration_test_runner.ts"
   },
   "devDependencies": {
-    "@eslint/js": "^9.35.0",
-    "eslint": "^9.35.0",
+    "@eslint/js": "^9.37.0",
+    "eslint": "^9.37.0",
     "execa": "^9.6.0",
     "globals": "^16.4.0",
     "http-status": "^2.1.0",
@@ -44,12 +44,13 @@
     "oauth2-mock-server": "^8.1.0",
     "prettier": "^3.6.2",
     "tinybench": "^5.0.1",
-    "typescript": "^5.9.2",
-    "typescript-eslint": "^8.44.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0",
     "vite-node": "^3.2.4",
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@ungap/raw-json": "0.4.4",
     "jwt-decode": "^4.0.0",
     "uuid": "^13.0.0"
   }

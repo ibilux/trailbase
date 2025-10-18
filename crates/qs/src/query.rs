@@ -184,10 +184,26 @@ impl Query {
   }
 }
 
+#[derive(Clone, Default, Debug, PartialEq, Deserialize)]
+pub struct FilterQuery {
+  /// Map from filter params to filter value. It's a vector in cases like:
+  ///   `col0[$gte]=2&col0[$lte]=10`.
+  pub filter: Option<ValueOrComposite>,
+}
+
+impl FilterQuery {
+  pub fn parse(query: &str) -> Result<FilterQuery, Error> {
+    // NOTE: We rely on non-strict mode to parse `filter[col0]=a&b%filter[col1]=c`.
+    let qs = serde_qs::Config::new(9, false);
+    return qs.deserialize_bytes::<FilterQuery>(query.as_bytes());
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
+  use rusqlite::types::Value as SqlValue;
   use serde_qs::Config;
 
   use crate::column_rel_value::{ColumnOpValue, CompareOp};
@@ -380,8 +396,12 @@ mod tests {
       )
     );
 
-    let filter = |_: &str| -> Result<(), String> {
-      return Ok(());
+    let filter = |_: &str, value: Value| -> Result<SqlValue, String> {
+      return Ok(match value {
+        Value::String(s) => SqlValue::Text(s),
+        Value::Integer(i) => SqlValue::Integer(i),
+        Value::Double(d) => SqlValue::Real(d),
+      });
     };
     let (sql, params) = q1.filter.clone().unwrap().into_sql(None, &filter).unwrap();
     assert_eq!(
@@ -391,9 +411,9 @@ mod tests {
     assert_eq!(
       params,
       vec![
-        (":__p0".to_string(), Value::String("val2".to_string())),
-        (":__p1".to_string(), Value::String("val0".to_string())),
-        (":__p2".to_string(), Value::Integer(1)),
+        (":__p0".to_string(), SqlValue::Text("val2".to_string())),
+        (":__p1".to_string(), SqlValue::Text("val0".to_string())),
+        (":__p2".to_string(), SqlValue::Integer(1)),
       ]
     );
     let (sql, _) = q1.filter.unwrap().into_sql(Some("p"), &filter).unwrap();
@@ -414,6 +434,35 @@ mod tests {
         value: Value::String("with white spaces".to_string()),
       }),
     );
+  }
+
+  #[test]
+  fn test_date_range_filter() {
+    // Test that multiple operators on the same column (e.g., date range filters) work correctly
+    let result =
+      Query::parse("filter[datetime][$gte]=2025-09-25&filter[datetime][$lte]=2025-09-27");
+
+    let query = result.expect("Should parse date range filter");
+    let filter = query.filter.expect("Should have filter");
+
+    // Verify it creates an AND composite with two conditions
+    match filter {
+      ValueOrComposite::Composite(Combiner::And, values) => {
+        assert_eq!(values.len(), 2, "Should have two date conditions");
+
+        // Check the conditions are correct
+        if let ValueOrComposite::Value(first) = &values[0] {
+          assert_eq!(first.column, "datetime");
+          assert_eq!(first.op, CompareOp::GreaterThanEqual);
+        }
+
+        if let ValueOrComposite::Value(second) = &values[1] {
+          assert_eq!(second.column, "datetime");
+          assert_eq!(second.op, CompareOp::LessThanEqual);
+        }
+      }
+      _ => panic!("Expected AND composite filter for date range"),
+    }
   }
 
   #[test]
